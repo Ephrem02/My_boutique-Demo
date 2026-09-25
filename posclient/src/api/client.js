@@ -1,13 +1,12 @@
 import axios from 'axios';
 
-const client = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000/api',
-});
+// withCredentials so the browser sends the httpOnly session cookie set by
+// POST /auth/login - the token itself is never readable/settable from JS.
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
-client.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
+const client = axios.create({
+  baseURL: API_BASE_URL,
+  withCredentials: true,
 });
 
 // Surfaces the API's own error message rather than a generic axios one,

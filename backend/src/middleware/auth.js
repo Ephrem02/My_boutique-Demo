@@ -2,37 +2,51 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { getPermissionsForUser } = require('../utils/permissions');
 
+/** Resolves a raw token to an active user, or null. Shared with the SSE stream. */
+async function userFromToken(token) {
+  if (!token) return null;
+  let payload;
+  try {
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return null;
+  }
+
+  const user = await db('users')
+    .select('users.id', 'users.full_name', 'users.email', 'users.status', 'users.session_version', 'roles.name as role')
+    .join('roles', 'roles.id', 'users.role_id')
+    .where('users.id', payload.sub)
+    .first();
+
+  // session_version is bumped on password reset, which invalidates every
+  // token issued before it (tokens from before this field existed count as 0).
+  if (!user || user.status !== 'active' || (payload.sv ?? 0) !== user.session_version) {
+    return null;
+  }
+
+  const permissions = await getPermissionsForUser(user.id);
+  return { ...user, permissions, tokenExpiresAt: payload.exp * 1000 };
+}
+
 /**
- * Verifies the JWT on the Authorization header and attaches the current
+ * Verifies the JWT from the httpOnly session cookie and attaches the current
  * user (with role name + permission codes) to req.user.
  */
 async function authenticate(req, res, next) {
   try {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    const token = req.cookies?.token || null;
     if (!token) {
-      return res.status(401).json({ error: 'Missing or malformed Authorization header' });
+      return res.status(401).json({ error: 'Not authenticated' });
     }
-
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await db('users')
-      .select('users.id', 'users.full_name', 'users.email', 'users.status', 'roles.name as role')
-      .join('roles', 'roles.id', 'users.role_id')
-      .where('users.id', payload.sub)
-      .first();
-
-    if (!user || user.status !== 'active') {
-      return res.status(401).json({ error: 'Account not found or disabled' });
+    const user = await userFromToken(token);
+    if (!user) {
+      return res.status(401).json({ error: 'Session is invalid or has expired - please sign in again' });
     }
-
-    const permissions = await getPermissionsForUser(user.id);
-
-    req.user = { ...user, permissions };
+    req.user = user;
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    next(err);
   }
 }
 
-module.exports = { authenticate };
+module.exports = { authenticate, userFromToken };

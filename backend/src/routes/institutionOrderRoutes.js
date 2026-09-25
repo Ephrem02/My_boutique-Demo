@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
+const { auditRoute } = require('../audit/auditRoute');
 const orders = require('../controllers/institutionOrderController');
 
 const router = express.Router();
@@ -11,8 +12,8 @@ router.get('/unpaid-summary', requirePermission('institution_payments.view'), or
 
 router.get('/', requirePermission('institution_orders.view'), orders.list);
 router.get('/:id', requirePermission('institution_orders.view'), orders.getOne);
-router.post('/', requirePermission('institution_orders.manage'), orders.create);
-router.post('/:id/deliver', requirePermission('institution_orders.manage'), orders.deliver);
-router.post('/:id/payments', requirePermission('institution_payments.manage'), orders.pay);
+router.post('/', requirePermission('institution_orders.manage'), auditRoute('institution_order.create', 'institution_order'), orders.create);
+router.post('/:id/deliver', requirePermission('institution_orders.manage'), auditRoute('institution_order.deliver', 'institution_order'), orders.deliver);
+router.post('/:id/payments', requirePermission('institution_payments.manage'), auditRoute('institution_payment.create', 'institution_order'), orders.pay);
 
 module.exports = router;

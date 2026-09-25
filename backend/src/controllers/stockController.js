@@ -1,5 +1,7 @@
 const db = require('../config/db');
-const { applyMovement, transferStock } = require('../models/stockService');
+const { handleServiceError } = require('../utils/handleServiceError');
+const { applyMovement, transferStock, recordDamage } = require('../models/stockService');
+const { audit } = require('../audit/auditService');
 
 // GET /api/stock/locations
 async function getLocations(req, res) {
@@ -57,9 +59,13 @@ async function intake(req, res) {
       performedBy: req.user.id,
       referenceType: 'manual',
     });
+    await audit(req, {
+      action: 'stock.intake', entityType: 'product', entityId: product_id,
+      newValues: { location_id, quantity: movement.quantity, notes }, metadata: { movement_id: movement.id },
+    });
     res.status(201).json(movement);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 
@@ -78,9 +84,13 @@ async function transfer(req, res) {
       performedBy: req.user.id,
       notes,
     });
+    await audit(req, {
+      action: 'stock.transfer', entityType: 'product', entityId: product_id,
+      newValues: { from_location_id, to_location_id, quantity: Number(quantity), notes },
+    });
     res.status(201).json({ message: 'Transfer recorded' });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 
@@ -91,27 +101,21 @@ async function reportDamage(req, res) {
     return res.status(400).json({ error: 'product_id, location_id and quantity are required' });
   }
   try {
-    const movement = await applyMovement({
+    // Movement + shrinkage record commit together (see recordDamage)
+    const { movement, shrinkage } = await recordDamage({
       productId: product_id,
       locationId: location_id,
-      type: 'damaged',
       quantity,
       notes,
       performedBy: req.user.id,
-      referenceType: 'manual',
     });
-    // Also log it as a shrinkage record so analytics picks it up automatically
-    await db('shrinkage_records').insert({
-      product_id,
-      quantity,
-      cause: 'spoilage',
-      notes,
-      recorded_by: req.user.id,
-      recorded_date: new Date().toISOString().slice(0, 10),
+    await audit(req, {
+      action: 'stock.damage', entityType: 'product', entityId: product_id,
+      newValues: { location_id, quantity: movement.quantity, notes }, metadata: { movement_id: movement.id, shrinkage_id: shrinkage.id },
     });
     res.status(201).json(movement);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 

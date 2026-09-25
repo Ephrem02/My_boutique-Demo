@@ -2,21 +2,25 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import NotificationBell from './NotificationBell';
 
 export default function Layout() {
   const { t } = useTranslation();
   const { user, logout, hasPermission } = useAuth();
   const navigate = useNavigate();
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate('/login');
   }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Link to="/" className="sidebar-brand">{t('nav.brand')}</Link>
+        <div className="sidebar-top">
+          <Link to="/" className="sidebar-brand">{t('nav.brand')}</Link>
+          <NotificationBell />
+        </div>
 
         <nav className="sidebar-nav">
           {hasPermission('sales.create', 'sales.view') && (
@@ -57,6 +61,14 @@ export default function Layout() {
           {hasPermission('reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view') && (
             <NavLink to="/reports" className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
               {t('nav.reports')}
+            </NavLink>
+          )}
+          <NavLink to="/notifications" className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
+            {t('nav.notifications')}
+          </NavLink>
+          {hasPermission('notifications.manage', 'notifications.deliveries.manage', 'settings.manage', 'audit.view') && (
+            <NavLink to="/admin/notifications" className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
+              {t('nav.admin')}
             </NavLink>
           )}
         </nav>

@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { handleServiceError } = require('../utils/handleServiceError');
 const { createDelivery, recordPayment, getUnpaidSummary } = require('../models/supplierService');
 
 // GET /api/supplier-deliveries?supplier_id=&status=
@@ -52,7 +53,7 @@ async function create(req, res) {
     });
     res.status(201).json(delivery);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 
@@ -74,7 +75,7 @@ async function pay(req, res) {
     });
     res.status(201).json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 

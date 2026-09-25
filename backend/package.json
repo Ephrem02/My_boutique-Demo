@@ -6,26 +6,44 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate": "knex migrate:latest",
+    "migrate": "knex migrate:latest && node scripts/setup-db-roles.js",
     "migrate:rollback": "knex migrate:rollback",
     "seed": "knex seed:run",
-    "check:permissions": "node scripts/check-permissions.js"
+    "db:roles": "node scripts/setup-db-roles.js",
+    "check:permissions": "node scripts/check-permissions.js",
+    "test": "jest --runInBand"
   },
   "license": "ISC",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
     "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "knex": "^3.1.0",
     "morgan": "^1.10.1",
     "multer": "^2.4.0",
+    "nodemailer": "^7.0.13",
     "pg": "^8.16.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "jest": "^30.5.2",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.3.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "globalSetup": "./tests/globalSetup.js",
+    "setupFiles": [
+      "./tests/setupEnv.js"
+    ],
+    "testTimeout": 30000,
+    "setupFilesAfterEnv": [
+      "./tests/setupAfterEnv.js"
+    ]
   }
 }

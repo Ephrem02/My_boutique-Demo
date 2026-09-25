@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
+const { auditRoute } = require('../audit/auditRoute');
 const deliveries = require('../controllers/supplierDeliveryController');
 
 const router = express.Router();
@@ -11,7 +12,7 @@ router.get('/unpaid-summary', requirePermission('supplier_payments.view'), deliv
 
 router.get('/', requirePermission('supplier_deliveries.view'), deliveries.list);
 router.get('/:id', requirePermission('supplier_deliveries.view'), deliveries.getOne);
-router.post('/', requirePermission('supplier_deliveries.manage'), deliveries.create);
-router.post('/:id/payments', requirePermission('supplier_payments.manage'), deliveries.pay);
+router.post('/', requirePermission('supplier_deliveries.manage'), auditRoute('supplier_delivery.create', 'supplier_delivery'), deliveries.create);
+router.post('/:id/payments', requirePermission('supplier_payments.manage'), auditRoute('supplier_payment.create', 'supplier_delivery'), deliveries.pay);
 
 module.exports = router;

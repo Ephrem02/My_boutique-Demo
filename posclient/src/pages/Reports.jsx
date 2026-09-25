@@ -1,23 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import client from '../api/client';
+import StatTile from '../components/StatTile';
 import { useAuth } from '../context/AuthContext';
 
 function isoDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
-}
-
-function StatTile({ label, value, tone }) {
-  return (
-    <div className="unpaid-card" style={tone === 'bad' ? { background: 'var(--danger-soft)' } : { background: 'var(--accent-soft)' }}>
-      <div className="unpaid-card-name">{label}</div>
-      <div className="unpaid-card-amount num" style={{ color: tone === 'bad' ? 'var(--danger)' : 'var(--accent-ink)' }}>
-        {value}
-      </div>
-    </div>
-  );
 }
 
 export default function Reports() {

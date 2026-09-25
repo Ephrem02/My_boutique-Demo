@@ -1,12 +1,13 @@
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 
 // Central permission list. Add new codes here as new modules/features are built.
 const PERMISSIONS = [
   // Sales / POS
-  'sales.create', 'sales.void', 'sales.view',
+  'sales.create', 'sales.void', 'sales.view', 'sales.view_all',
   'returns.process',
   // Stock
-  'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view',
+  'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view',
   // Products & categories
   'products.manage', 'products.view',
   // Suppliers
@@ -21,16 +22,20 @@ const PERMISSIONS = [
   'pricing.manage', 'employees.manage', 'settings.manage',
   // Reporting
   'reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view',
+  // Notifications / audit (admin territory)
+  'notifications.manage', 'notifications.deliveries.manage', 'audit.view',
 ];
 
 const ROLE_PERMISSIONS = {
+  // Cashiers only see their own sales (no sales.view_all) and no stock
+  // movement history - least privilege for the till.
   cashier: [
     'sales.create', 'sales.view', 'returns.process',
     'stock.view', 'products.view',
   ],
   store_keeper: [
-    'sales.create', 'sales.view', 'returns.process',
-    'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view',
+    'sales.create', 'sales.view', 'sales.view_all', 'returns.process',
+    'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view',
     'products.manage', 'products.view',
     'suppliers.view', 'supplier_deliveries.manage', 'supplier_deliveries.view', 'supplier_payments.view',
     'institutions.view', 'institution_orders.manage', 'institution_orders.view', 'institution_payments.view',
@@ -68,13 +73,29 @@ exports.seed = async function (knex) {
   }
   await knex('role_permissions').insert(mappings);
 
-  // Default admin account - CHANGE THIS PASSWORD after first login
-  const passwordHash = await bcrypt.hash('ChangeMe123!', 10);
+  // Default admin account - password is generated fresh on every seed run and
+  // printed once below. It is never hardcoded or written to disk, since this
+  // seed file (and its history) ends up in the repo.
+  const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@shop.local';
+  const generatedPassword = crypto.randomBytes(12).toString('base64url');
+  const passwordHash = await bcrypt.hash(generatedPassword, 10);
   await knex('users').insert({
     full_name: 'Shop Admin',
-    email: 'admin@shop.local',
+    email: adminEmail,
     password_hash: passwordHash,
     role_id: roleIdByName.store_manager,
     status: 'active',
   });
+
+  console.log('\n==============================================');
+  console.log('Seeded default admin account (shown only once):');
+  console.log(`  email:    ${adminEmail}`);
+  console.log(`  password: ${generatedPassword}`);
+  console.log('Save this now and change the password after first login.');
+  console.log('==============================================\n');
 };
+
+// Exported so tests and scripts/check-permissions.js can read the canonical
+// role mapping without running this (destructive) seed.
+exports.PERMISSIONS = PERMISSIONS;
+exports.ROLE_PERMISSIONS = ROLE_PERMISSIONS;

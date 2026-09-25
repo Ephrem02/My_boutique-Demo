@@ -125,7 +125,7 @@ export default function Products() {
               <th>{t('products.sku')}</th>
               <th>{t('common.name')}</th>
               <th>{t('products.category')}</th>
-              <th>{t('products.cost')}</th>
+              {canManage && <th>{t('products.cost')}</th>}
               <th>{t('products.sellingPrice')}</th>
               <th>{t('products.reorderLevel')}</th>
               <th>{t('products.stock')}</th>
@@ -159,7 +159,7 @@ export default function Products() {
                     )}
                   </td>
                   <td>{p.category_name || '—'}</td>
-                  <td className="num">{Number(p.cost_price).toLocaleString()}</td>
+                  {canManage && <td className="num">{Number(p.cost_price).toLocaleString()}</td>}
                   <td className="num">{Number(p.selling_price).toLocaleString()}</td>
                   <td className="num">{p.reorder_level}</td>
                   <td className={`num ${low ? 'low-text' : ''}`} style={low ? { color: 'var(--warn)', fontWeight: 500 } : undefined}>

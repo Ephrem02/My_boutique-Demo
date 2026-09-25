@@ -4,30 +4,15 @@
 //
 // Usage: npm run check:permissions   (exits 1 if drift is found)
 const path = require('path');
-const fs = require('fs');
-const Module = require('module');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 const db = require('../src/config/db');
-
-// The seed file doesn't export its constants, and requiring it normally would
-// only give us the (destructive) seed function. Compile a copy that also
-// exports PERMISSIONS and ROLE_PERMISSIONS, without ever calling seed().
-function loadSeedConstants() {
-  const seedPath = path.join(__dirname, '..', 'src', 'seeds', '01_roles_permissions.js');
-  const src = `${fs.readFileSync(seedPath, 'utf8')}\nmodule.exports.__constants = { PERMISSIONS, ROLE_PERMISSIONS };`;
-  const mod = new Module(seedPath);
-  mod.filename = seedPath;
-  mod.paths = Module._nodeModulePaths(path.dirname(seedPath));
-  mod._compile(src, seedPath);
-  return mod.exports.__constants;
-}
+// Requiring the seed only reads its exported constants; seed() never runs.
+const { PERMISSIONS, ROLE_PERMISSIONS } = require('../src/seeds/01_roles_permissions');
 
 const difference = (a, b) => [...a].filter((x) => !b.has(x)).sort();
 
 async function main() {
-  const { PERMISSIONS, ROLE_PERMISSIONS } = loadSeedConstants();
-
   const rows = await db('roles as r')
     .leftJoin('role_permissions as rp', 'rp.role_id', 'r.id')
     .leftJoin('permissions as p', 'p.id', 'rp.permission_id')

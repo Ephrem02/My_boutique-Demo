@@ -9,6 +9,7 @@ import ReportDamageModal from '../components/ReportDamageModal';
 export default function Stock() {
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
+  const canSeeMovements = hasPermission('stock.movements.view');
   const [levels, setLevels] = useState([]);
   const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,18 +22,19 @@ export default function Stock() {
     setLoading(true);
     setError('');
     try {
-      const [{ data: levelData }, { data: movementData }] = await Promise.all([
+      // Movement history names who did what - hidden from cashiers (least privilege)
+      const [{ data: levelData }, movementRes] = await Promise.all([
         client.get('/stock/levels'),
-        client.get('/stock/movements'),
+        canSeeMovements ? client.get('/stock/movements') : Promise.resolve(null),
       ]);
       setLevels(levelData);
-      setMovements(movementData.slice(0, 50));
+      setMovements(movementRes ? movementRes.data.slice(0, 50) : []);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canSeeMovements]);
 
   useEffect(() => {
     load();
@@ -94,8 +96,8 @@ export default function Stock() {
         </table>
       )}
 
-      <div className="section-title">{t('stock.recentMovements')}</div>
-      {!loading && (
+      {canSeeMovements && <div className="section-title">{t('stock.recentMovements')}</div>}
+      {!loading && canSeeMovements && (
         <table className="data-table">
           <thead>
             <tr>

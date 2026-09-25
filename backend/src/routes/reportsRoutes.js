@@ -6,6 +6,7 @@ const reports = require('../controllers/reportsController');
 const router = express.Router();
 router.use(authenticate);
 
+router.get('/my-summary', requirePermission('sales.create', 'sales.view'), reports.mySummary);
 router.get('/sales-summary', requirePermission('reports.sales.view'), reports.salesSummary);
 router.get('/top-products', requirePermission('reports.sales.view'), reports.topProducts);
 router.get('/shrinkage', requirePermission('reports.shrinkage.view'), reports.shrinkage);

@@ -193,4 +193,40 @@ async function financialSummary(req, res) {
   });
 }
 
-module.exports = { salesSummary, topProducts, shrinkage, financialSummary };
+// GET /api/reports/my-summary?from=&to=
+// For anyone who sells (cashiers included): figures for their *own* sales,
+// plus shop-wide stock counts that carry no financial data. No other
+// cashier's figures and no revenue/cost for the shop as a whole.
+async function mySummary(req, res) {
+  const { from, to } = req.query;
+  const own = () => applyDateRange(db('sales').where('cashier_id', req.user.id), 'created_at', from, to);
+
+  const totals = await own()
+    .where('status', 'completed')
+    .select(db.raw('COUNT(*) as sale_count'), db.raw('COALESCE(SUM(total_amount), 0) as revenue'))
+    .first();
+  const voided = await own().where('status', 'voided').count('* as count').first();
+  const byPaymentMethod = await own()
+    .where('status', 'completed')
+    .select('payment_method', db.raw('COUNT(*) as sale_count'), db.raw('COALESCE(SUM(total_amount), 0) as revenue'))
+    .groupBy('payment_method')
+    .orderBy('revenue', 'desc');
+
+  const stock = await db('products')
+    .leftJoin('stock_levels', 'stock_levels.product_id', 'products.id')
+    .where('products.is_active', true)
+    .groupBy('products.id', 'products.reorder_level')
+    .select('products.reorder_level', db.raw('COALESCE(SUM(stock_levels.quantity), 0)::int as total'));
+
+  res.json({
+    my_sale_count: Number(totals.sale_count),
+    my_revenue: Number(totals.revenue),
+    my_voided_count: Number(voided.count),
+    my_by_payment_method: byPaymentMethod.map((r) => ({ ...r, sale_count: Number(r.sale_count), revenue: Number(r.revenue) })),
+    shop_active_products: stock.length,
+    shop_low_stock_count: stock.filter((p) => p.total > 0 && p.total <= p.reorder_level).length,
+    shop_out_of_stock_count: stock.filter((p) => p.total === 0).length,
+  });
+}
+
+module.exports = { salesSummary, topProducts, shrinkage, financialSummary, mySummary };

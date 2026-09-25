@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { handleServiceError } = require('../utils/handleServiceError');
 const { createOrder, markDelivered, recordPayment, getUnpaidSummary } = require('../models/institutionService');
 
 // GET /api/institution-orders?institution_id=&delivery_status=&payment_status=
@@ -53,7 +54,7 @@ async function create(req, res) {
     });
     res.status(201).json(order);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 
@@ -64,7 +65,7 @@ async function deliver(req, res) {
     const order = await markDelivered({ orderId: id, performedBy: req.user.id });
     res.json(order);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 
@@ -85,7 +86,7 @@ async function pay(req, res) {
     });
     res.status(201).json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleServiceError(err, res);
   }
 }
 

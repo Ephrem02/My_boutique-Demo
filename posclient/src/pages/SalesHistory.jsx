@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import SaleDetail from '../components/SaleDetail';
+import StatTile from '../components/StatTile';
 
 export default function SalesHistory() {
   const { t } = useTranslation();
@@ -12,16 +13,25 @@ export default function SalesHistory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  // Without sales.view_all the API only returns this user's own sales, so the
+  // page becomes "My sales" with a personal summary instead of shop totals.
+  const ownOnly = !hasPermission('sales.view_all');
+  const [summary, setSummary] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const requests = [client.get('/sales')];
-      if (hasPermission('returns.process')) requests.push(client.get('/returns'));
-      const [{ data: salesData }, returnsRes] = await Promise.all(requests);
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const [{ data: salesData }, returnsRes, summaryRes] = await Promise.all([
+        client.get('/sales'),
+        hasPermission('returns.process') ? client.get('/returns') : Promise.resolve(null),
+        ownOnly ? client.get('/reports/my-summary', { params: { from: today, to: today } }) : Promise.resolve(null),
+      ]);
       setSales(salesData);
       if (returnsRes) setReturns(returnsRes.data.slice(0, 10));
+      if (summaryRes) setSummary(summaryRes.data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -37,10 +47,20 @@ export default function SalesHistory() {
   return (
     <div className="page-body">
       <div className="page-header">
-        <h1>{t('salesHistory.title')}</h1>
+        <h1>{ownOnly ? t('salesHistory.myTitle') : t('salesHistory.title')}</h1>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {summary && (
+        <div className="unpaid-summary">
+          <StatTile label={t('salesHistory.mySalesToday')} value={summary.my_sale_count} />
+          <StatTile label={t('salesHistory.myRevenueToday')} value={`${summary.my_revenue.toLocaleString()} RWF`} />
+          <StatTile label={t('salesHistory.myVoidedToday')} value={summary.my_voided_count} tone={summary.my_voided_count ? 'bad' : undefined} />
+          <StatTile label={t('salesHistory.shopLowStock')} value={summary.shop_low_stock_count} tone={summary.shop_low_stock_count ? 'warn' : undefined} />
+          <StatTile label={t('salesHistory.shopOutOfStock')} value={summary.shop_out_of_stock_count} tone={summary.shop_out_of_stock_count ? 'bad' : undefined} />
+        </div>
+      )}
 
       {!loading && (
         <table className="data-table" style={{ marginBottom: returns.length ? 28 : 0 }}>

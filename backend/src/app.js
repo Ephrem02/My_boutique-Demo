@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 
 const { AppError } = require('./utils/AppError');
 const { reportError } = require('./utils/errorReporter');
+const { isClosedPeriodViolation, CLOSED_PERIOD_MESSAGE } = require('./utils/handleServiceError');
 const { requestContext } = require('./middleware/requestContext');
 const authRoutes = require('./routes/authRoutes');
 const stockRoutes = require('./routes/stockRoutes');
@@ -23,6 +24,7 @@ const reportsRoutes = require('./routes/reportsRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const { businessDayRoutes, correctionRoutes } = require('./routes/businessDayRoutes');
 
 const app = express();
 
@@ -74,6 +76,8 @@ app.use('/api/institution-orders', institutionOrderRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/business-days', businessDayRoutes);
+app.use('/api/corrections', correctionRoutes);
 
 // Fallback error handler - only an AppError's own message ever reaches the
 // client; anything else (a DB error, a bug) is logged here and replaced with
@@ -85,6 +89,9 @@ app.use((err, req, res, next) => {
   // Malformed ids/dates in the URL (e.g. /api/sales/abc) are client errors
   if (err.code === '22P02' || err.code === '22007' || err.code === '22008') {
     return res.status(400).json({ error: 'Invalid value in request' });
+  }
+  if (isClosedPeriodViolation(err)) {
+    return res.status(409).json({ error: CLOSED_PERIOD_MESSAGE });
   }
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Malformed JSON body' });

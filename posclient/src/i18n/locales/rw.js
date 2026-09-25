@@ -52,8 +52,10 @@ export default {
   },
   paymentMethods: {
     cash: 'Amafaranga',
-    mobile_money: 'Mobile Money',
+    mtn_mobile_money: 'MTN Mobile Money',
+    airtel_money: 'Airtel Money',
     card: 'Ikarita',
+    mobile_money: 'Mobile Money',
     bank_transfer: 'Kohereza kuri Banki',
   },
   causes: {

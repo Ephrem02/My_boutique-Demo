@@ -7,7 +7,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { SEVERITY_BADGE, linkFor, humanizeType } from '../utils/notificationDisplay';
 
 const PAGE_SIZE = 20;
-const CATEGORIES = ['inventory', 'sales', 'purchasing', 'users', 'security', 'system'];
+const CATEGORIES = ['inventory', 'sales', 'purchasing', 'operations', 'users', 'security', 'system'];
 
 export default function Notifications() {
   const { t } = useTranslation();

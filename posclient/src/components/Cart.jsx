@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import client from '../api/client';
 
-const PAYMENT_METHODS = ['cash', 'mobile_money', 'card', 'bank_transfer'];
+// MTN and Airtel are separate so the daily closing can report each network
+const PAYMENT_METHODS = ['cash', 'mtn_mobile_money', 'airtel_money', 'card'];
 
-export default function Cart({ items, onUpdateQuantity, onRemove, onSold }) {
+export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocked = false }) {
   const { t } = useTranslation();
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [loading, setLoading] = useState(false);
@@ -97,7 +98,7 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold }) {
 
         <button
           className="btn btn-primary btn-block"
-          disabled={items.length === 0 || loading}
+          disabled={items.length === 0 || loading || blocked}
           onClick={handleCheckout}
         >
           {loading ? t('pos.completingSale') : t('pos.completeSale')}

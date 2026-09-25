@@ -4,10 +4,16 @@ const { applyMovement, inLockOrder, toPositiveInt } = require('./stockService');
 const { emit, emitIfOver, actorName, hourBucket } = require('../notifications/notificationService');
 const { getRule } = require('../notifications/rules');
 
+// Required lazily inside functions: businessDayService depends on the
+// notification service, which is loaded after this module in some paths.
+const businessDay = () => require('../businessDay/businessDayService');
+
 // ---------- Sales ----------
 
 const FRONT_SHELF_NAME = 'front_shelf';
-const PAYMENT_METHODS = ['cash', 'mobile_money', 'card', 'bank_transfer'];
+// MTN and Airtel are reported separately. 'mobile_money'/'bank_transfer'
+// exist only on sales recorded before this change and are no longer accepted.
+const PAYMENT_METHODS = ['cash', 'mtn_mobile_money', 'airtel_money', 'card'];
 
 /**
  * items: [{ product_id, quantity, location_id? }] - unit_price is never taken
@@ -23,6 +29,8 @@ async function createSale({ cashierId, items, paymentMethod }) {
   const frontShelf = await db('stock_locations').where({ name: FRONT_SHELF_NAME }).first();
 
   return db.transaction(async (trx) => {
+    // No sales without an OPEN business day (never auto-opened)
+    const day = await businessDay().requireOpenDay(trx);
     const productIds = [...new Set(items.map((i) => i.product_id))];
     const products = await trx('products').whereIn('id', productIds);
     const productById = new Map(products.map((p) => [p.id, p]));
@@ -41,6 +49,7 @@ async function createSale({ cashierId, items, paymentMethod }) {
         total_amount: totalAmount,
         payment_method: paymentMethod,
         status: 'completed',
+        business_day_id: day.id,
       })
       .returning('*');
 
@@ -112,6 +121,12 @@ async function voidSale({ saleId, voidedBy }) {
     const sale = await trx('sales').where({ id: saleId }).forUpdate().first();
     if (!sale) throw new AppError('Sale not found', 404);
     if (sale.status === 'voided') throw new AppError('This sale is already voided');
+    // A void rewrites the day's figures, so it's only possible while the
+    // sale's own business day is still OPEN. After that: refund or correction.
+    const open = await businessDay().requireOpenDay(trx);
+    if (sale.business_day_id !== open.id) {
+      throw new AppError("This sale belongs to a closed business day and can't be voided - process a refund or request a correction instead", 409);
+    }
 
     const items = inLockOrder(await trx('sale_items').where({ sale_id: saleId }));
     const returned = await returnedQuantities(trx, items.map((i) => i.id));
@@ -173,6 +188,8 @@ async function voidSale({ saleId, voidedBy }) {
 async function processReturn({ saleItemId, quantity, reason, restocked, processedBy, restrictToCashierId = null }) {
   const qty = toPositiveInt(quantity);
   return db.transaction(async (trx) => {
+    // Refunds are today's transactions (even for an older sale) and need an OPEN day
+    const day = await businessDay().requireOpenDay(trx);
     const itemRef = await trx('sale_items').where({ id: saleItemId }).first('sale_id');
     if (!itemRef) throw new AppError('Sale item not found', 404);
     const sale = await trx('sales').where({ id: itemRef.sale_id }).forUpdate().first();
@@ -199,6 +216,10 @@ async function processReturn({ saleItemId, quantity, reason, restocked, processe
         reason,
         restocked: !!restocked,
         processed_by: processedBy,
+        business_day_id: day.id,
+        // V1: refunds go back through the sale's own payment method
+        refund_amount: qty * Number(saleItem.unit_price),
+        refund_method: sale.payment_method,
       })
       .returning('*');
 

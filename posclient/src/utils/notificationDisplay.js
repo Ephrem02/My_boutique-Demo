@@ -24,6 +24,10 @@ const LINKS = {
 };
 
 export function linkFor(notification, hasPermission) {
+  if (notification.entity_type === 'business_day') {
+    // Managers get the day's full report; everyone else the dashboard boards
+    return hasPermission('day.history.view') ? `/business-days/${notification.entity_id}` : '/';
+  }
   const link = LINKS[notification.entity_type];
   if (!link || !hasPermission(link.permission)) return null;
   return link.path;

@@ -23,8 +23,13 @@ export default function Layout() {
         </div>
 
         <nav className="sidebar-nav">
-          {hasPermission('sales.create', 'sales.view') && (
+          {hasPermission('day.view') && (
             <NavLink to="/" end className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
+              {t('nav.dashboard')}
+            </NavLink>
+          )}
+          {hasPermission('sales.create', 'sales.view') && (
+            <NavLink to="/pos" className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
               {t('nav.sales')}
             </NavLink>
           )}

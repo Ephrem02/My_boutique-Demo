@@ -8,6 +8,7 @@ import EmailTab from './EmailTab';
 import DeliveriesTab from './DeliveriesTab';
 import AuditTab from './AuditTab';
 import SendTab from './SendTab';
+import ClosingTab from './ClosingTab';
 
 // Tabs are filtered by permission for convenience only - every endpoint
 // behind them enforces the same permission on the server.
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'templates', permission: 'notifications.manage', Component: TemplatesTab },
   { id: 'send', permission: 'notifications.manage', Component: SendTab },
   { id: 'email', permission: 'settings.manage', Component: EmailTab },
+  { id: 'closing', permission: 'settings.manage', Component: ClosingTab },
   { id: 'deliveries', permission: 'notifications.deliveries.manage', Component: DeliveriesTab },
   { id: 'audit', permission: 'audit.view', Component: AuditTab },
 ];

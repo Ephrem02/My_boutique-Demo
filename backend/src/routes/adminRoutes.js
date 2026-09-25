@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
 const admin = require('../controllers/adminNotificationController');
 const auditLogs = require('../controllers/auditController');
+const businessDays = require('../controllers/businessDayController');
 
 const router = express.Router();
 router.use(authenticate);
@@ -44,6 +45,9 @@ router.post('/email-settings/test', settings, outboundLimiter, admin.sendTestEma
 
 router.get('/deliveries', deliveries, admin.listDeliveries);
 router.post('/deliveries/:id/resend', deliveries, outboundLimiter, admin.resendDelivery);
+
+router.get('/closing-settings', settings, businessDays.getSettings);
+router.put('/closing-settings', settings, businessDays.updateSettings);
 
 router.get('/audit-logs', auditView, auditLogs.list);
 router.get('/audit-logs/export', auditView, auditLogs.exportCsv);

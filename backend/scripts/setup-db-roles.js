@@ -3,8 +3,9 @@
 // every migration - `npm run migrate` does this automatically.
 //
 // The runtime role gets SELECT/INSERT/UPDATE/DELETE on application tables,
-// but only SELECT/INSERT on audit_logs and nothing on the migration tables,
-// so the API itself can never rewrite the audit trail or the schema.
+// but only SELECT/INSERT on the append-only history tables (audit_logs,
+// daily_closings, closing_adjustments) and nothing on the migration tables,
+// so the API itself can never rewrite history or the schema.
 //
 // Usage: node scripts/setup-db-roles.js   (NODE_ENV picks the database)
 const path = require('path');
@@ -43,10 +44,12 @@ async function setupDbRoles({ environment = process.env.NODE_ENV || 'development
     await owner.raw(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${appUser}`);
 
     await owner.raw(`REVOKE ALL ON knex_migrations, knex_migrations_lock FROM ${appUser}`);
-    const hasAudit = await owner.schema.hasTable('audit_logs');
-    if (hasAudit) {
-      await owner.raw(`REVOKE ALL ON audit_logs FROM ${appUser}`);
-      await owner.raw(`GRANT SELECT, INSERT ON audit_logs TO ${appUser}`);
+    // Append-only history tables: read and add, never change or remove.
+    for (const table of ['audit_logs', 'daily_closings', 'closing_adjustments']) {
+      if (await owner.schema.hasTable(table)) {
+        await owner.raw(`REVOKE ALL ON ${table} FROM ${appUser}`);
+        await owner.raw(`GRANT SELECT, INSERT ON ${table} TO ${appUser}`);
+      }
     }
     log(`Runtime role "${appUser}" ${exists ? 'updated' : 'created'} on database "${database}".`);
     return true;

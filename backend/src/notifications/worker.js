@@ -13,13 +13,16 @@ const { getEmailSettings } = require('./settings');
 const { getRule } = require('./rules');
 const { emit, hourBucket } = require('./notificationService');
 const { cleanString, formatRwf } = require('../utils/sanitize');
+const { audit } = require('../audit/auditService');
+
+const CLOSING_CHECK_MS = 60 * 1000;
 
 const BACKOFF_MINUTES = [1, 5, 15, 60, 240];
 const BATCH_SIZE = 20;
 const TICK_MS = 15 * 1000;
 const SCHEDULE_MS = 60 * 60 * 1000;
 
-const state = { timer: null, inFlight: null, lastRunAt: null, lastScheduledAt: null, lastError: null };
+const state = { timer: null, inFlight: null, lastClosingCheckAt: null, lastRunAt: null, lastScheduledAt: null, lastError: null };
 
 async function recoverStale() {
   await db('notification_deliveries')
@@ -163,6 +166,52 @@ async function checkSupplierPayments() {
 }
 
 /**
+ * Business-day closing schedule (all times from Admin > Closing settings):
+ * reminder before the expected closing time, "due" at it, and a critical
+ * manager alert + audit entry once the day is still not closed after the
+ * configured delay. Each fires once per day (dedup keys include the reopen
+ * count, so a reopened day is tracked again).
+ */
+async function checkBusinessDay(now = new Date()) {
+  // Required lazily: the business-day modules depend on the notification service.
+  const { getClosingSettings } = require('../businessDay/settings');
+  const { dueAt } = require('../businessDay/boards');
+  const { ACTIVE, dateOnly } = require('../businessDay/businessDayService');
+  const settings = await getClosingSettings();
+  const day = await db('business_days').whereIn('status', ACTIVE).first();
+  if (!day) return null;
+
+  const due = (await dueAt(day, settings)).getTime();
+  const reminderAt = due - settings.reminder_lead_minutes * 60000;
+  const criticalAt = due + settings.critical_delay_minutes * 60000;
+  const t = now.getTime();
+  const key = (type) => `${type}:day:${day.id}:r${day.reopened_count}`;
+  const params = { business_date: dateOnly(day.business_date), closing_time: settings.expected_closing_time };
+  const base = { entityType: 'business_day', entityId: day.id };
+  const fired = [];
+
+  if (day.status === 'open' && t >= reminderAt && t < due) {
+    if (await emit(db, { ...base, type: 'CLOSING_REMINDER', dedupKey: key('CLOSING_REMINDER'), params })) fired.push('reminder');
+  }
+  if (day.status === 'open' && t >= due) {
+    if (await emit(db, { ...base, type: 'CLOSING_DUE', dedupKey: key('CLOSING_DUE'), params })) fired.push('due');
+  }
+  if (t >= criticalAt) {
+    const minutesOverdue = Math.floor((t - due) / 60000);
+    const event = await emit(db, { ...base, type: 'DAY_LEFT_OPEN', dedupKey: key('DAY_LEFT_OPEN'), params: { ...params, minutes_overdue: minutesOverdue } });
+    if (event) {
+      fired.push('critical');
+      await audit(null, {
+        action: 'day.left_open_critical', entityType: 'business_day', entityId: day.id,
+        actorUserId: null, actorRole: 'system', result: 'failure',
+        metadata: { business_day_id: day.id, status: day.status, minutes_overdue: minutesOverdue, expected_closing_time: settings.expected_closing_time },
+      });
+    }
+  }
+  return fired;
+}
+
+/**
  * One pass of the worker. If a pass is already running, callers share it
  * (and wait for it) instead of starting a second one in parallel.
  */
@@ -178,6 +227,10 @@ function runOnce(options = {}) {
 async function runPass({ includeScheduled = false } = {}) {
   try {
     const sent = await processDeliveries();
+    if (!state.lastClosingCheckAt || Date.now() - state.lastClosingCheckAt >= CLOSING_CHECK_MS) {
+      await checkBusinessDay();
+      state.lastClosingCheckAt = Date.now();
+    }
     let checked = null;
     const due = !state.lastScheduledAt || Date.now() - state.lastScheduledAt >= SCHEDULE_MS;
     if (includeScheduled || due) {
@@ -216,4 +269,4 @@ function status() {
   };
 }
 
-module.exports = { runOnce, start, stop, status, checkSupplierPayments, BACKOFF_MINUTES };
+module.exports = { runOnce, start, stop, status, checkSupplierPayments, checkBusinessDay, BACKOFF_MINUTES };

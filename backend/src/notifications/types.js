@@ -16,7 +16,7 @@
 
 const ROLES = ['cashier', 'store_keeper', 'store_manager'];
 const SEVERITIES = ['info', 'warning', 'critical'];
-const CATEGORIES = ['inventory', 'sales', 'purchasing', 'users', 'security', 'system'];
+const CATEGORIES = ['inventory', 'sales', 'purchasing', 'operations', 'users', 'security', 'system'];
 
 const TYPES = {
   LOW_STOCK: {
@@ -214,6 +214,84 @@ const TYPES = {
     vars: ['recipient_name', 'subject'],
     title: 'Email delivery failed',
     body: 'An email to {{recipient_name}} ("{{subject}}") could not be delivered. See Admin > Deliveries.',
+  },
+  // ---- Daily business cycle ----
+  CLOSING_REMINDER: {
+    category: 'operations', severity: 'warning', permission: 'day.close',
+    roles: ['cashier', 'store_manager'], inApp: true, email: false,
+    vars: ['business_date', 'closing_time'],
+    title: 'Closing at {{closing_time}}',
+    body: 'The business day {{business_date}} is due to close at {{closing_time}}. Get ready to count the cash.',
+  },
+  CLOSING_DUE: {
+    category: 'operations', severity: 'warning', permission: 'day.close',
+    roles: ['cashier', 'store_manager'], inApp: true, email: false,
+    vars: ['business_date', 'closing_time'],
+    title: 'Business day {{business_date}} is due for closing',
+    body: 'It is past the expected closing time ({{closing_time}}). Please start the closing.',
+  },
+  DAY_LEFT_OPEN: {
+    category: 'operations', severity: 'critical', permission: 'day.review', mandatory: true,
+    roles: ['store_manager'], inApp: true, email: true,
+    vars: ['business_date', 'closing_time', 'minutes_overdue'],
+    title: 'Business day {{business_date}} was not closed',
+    body: 'The business day {{business_date}} is still not closed {{minutes_overdue}} minutes after the expected closing time ({{closing_time}}).',
+  },
+  CLOSING_SUBMITTED: {
+    category: 'operations', severity: 'info', permission: 'day.review',
+    roles: ['store_manager'], inApp: true, email: false,
+    vars: ['business_date', 'actor_name', 'variance_rwf', 'band'],
+    title: 'Closing submitted for {{business_date}}',
+    body: '{{actor_name}} submitted the closing for {{business_date}}. Cash variance: {{variance_rwf}} ({{band}}).',
+  },
+  CLOSING_ACCEPTED: {
+    category: 'operations', severity: 'info', permission: 'day.review', targetAlways: true,
+    roles: [], inApp: true, email: false,
+    vars: ['business_date', 'accepted_by_name', 'variance_rwf'],
+    title: 'Closing for {{business_date}} accepted',
+    body: 'The closing for {{business_date}} was accepted by {{accepted_by_name}}. Recorded cash variance: {{variance_rwf}}.',
+  },
+  CASH_VARIANCE_ATTENTION: {
+    category: 'operations', severity: 'warning', permission: 'day.review',
+    roles: ['store_manager'], inApp: true, email: false,
+    vars: ['business_date', 'variance_rwf', 'expected_rwf', 'counted_rwf', 'actor_name', 'explanation'],
+    title: 'Cash variance {{variance_rwf}} on {{business_date}}',
+    body: '{{actor_name}} counted {{counted_rwf}} against an expected {{expected_rwf}} ({{variance_rwf}}). Explanation: {{explanation}}',
+  },
+  CASH_VARIANCE_CRITICAL: {
+    category: 'operations', severity: 'critical', permission: 'day.review', mandatory: true, targetAlways: true,
+    roles: ['store_manager'], inApp: true, email: true,
+    vars: ['business_date', 'variance_rwf', 'expected_rwf', 'counted_rwf', 'actor_name', 'explanation'],
+    title: 'Critical cash variance {{variance_rwf}} on {{business_date}}',
+    body: '{{actor_name}} counted {{counted_rwf}} against an expected {{expected_rwf}} ({{variance_rwf}}). A manager must review this closing. Explanation: {{explanation}}',
+  },
+  RECOUNT_REQUESTED: {
+    category: 'operations', severity: 'warning', permission: 'day.review', mandatory: true, targetAlways: true,
+    roles: [], inApp: true, email: false,
+    vars: ['business_date', 'reviewer_name', 'reason'],
+    title: 'Recount requested for {{business_date}}',
+    body: '{{reviewer_name}} asked for the cash to be recounted for {{business_date}}: {{reason}}',
+  },
+  CORRECTION_REQUESTED: {
+    category: 'operations', severity: 'warning', permission: 'day.review',
+    roles: ['store_manager'], inApp: true, email: false,
+    vars: ['business_date', 'actor_name', 'field', 'original_value', 'requested_value', 'reason'],
+    title: 'Correction requested for {{business_date}}',
+    body: '{{actor_name}} asked to change {{field}} from {{original_value}} to {{requested_value}}: {{reason}}',
+  },
+  CORRECTION_DECIDED: {
+    category: 'operations', severity: 'info', permission: 'day.review', mandatory: true, targetAlways: true,
+    roles: [], inApp: true, email: false,
+    vars: ['business_date', 'field', 'decision', 'reviewer_name', 'reason'],
+    title: 'Correction {{decision}} for {{business_date}}',
+    body: '{{reviewer_name}} {{decision}} your correction to {{field}} for {{business_date}}. {{reason}}',
+  },
+  BUSINESS_DAY_REOPENED: {
+    category: 'operations', severity: 'critical', permission: 'day.review', mandatory: true,
+    roles: ['store_manager'], inApp: true, email: true,
+    vars: ['business_date', 'actor_name', 'reason'],
+    title: 'Business day {{business_date}} reopened',
+    body: '{{actor_name}} reopened the closed business day {{business_date}}. Reason: {{reason}}',
   },
   MANUAL: {
     category: 'system', severity: 'info', permission: null, manual: true,

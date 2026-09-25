@@ -70,8 +70,14 @@ async function applyMovement({
 
     await t('stock_levels').where({ id: existing.id }).update({ quantity: newQty });
 
+    // Stamped with the active business day when there is one; stock work
+    // (deliveries, transfers) isn't blocked by the financial day's state.
+    const { activeDayId } = require('../businessDay/businessDayService');
+    const businessDayId = await activeDayId(t);
+
     const [movement] = await t('stock_movements')
       .insert({
+        business_day_id: businessDayId,
         product_id: productId,
         location_id: locationId,
         type,

@@ -1,10 +1,13 @@
 import { useCallback, useState } from 'react';
 import ProductGrid from '../components/ProductGrid';
 import Cart from '../components/Cart';
+import DayStatusBanner from '../components/businessDay/DayStatusBanner';
 
 export default function POSPage() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [items, setItems] = useState([]);
+  // Selling needs an OPEN business day; null = still checking
+  const [dayStatus, setDayStatus] = useState(null);
 
   const addItem = useCallback((product) => {
     const stock = Number(product.total_quantity);
@@ -48,9 +51,12 @@ export default function POSPage() {
   }, []);
 
   return (
-    <div className="pos-body">
-      <ProductGrid onAdd={addItem} refreshToken={refreshToken} />
-      <Cart items={items} onUpdateQuantity={updateQuantity} onRemove={removeItem} onSold={handleSold} />
-    </div>
+    <>
+      <DayStatusBanner onStatus={setDayStatus} />
+      <div className="pos-body">
+        <ProductGrid onAdd={addItem} refreshToken={refreshToken} />
+        <Cart items={items} onUpdateQuantity={updateQuantity} onRemove={removeItem} onSold={handleSold} blocked={dayStatus !== null && dayStatus !== 'open'} />
+      </div>
+    </>
   );
 }

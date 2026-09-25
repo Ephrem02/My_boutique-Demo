@@ -22,6 +22,8 @@ const ADMIN_ROUTES = [
   ['post', '/api/admin/email-settings/test'],
   ['get', '/api/admin/deliveries'],
   ['post', '/api/admin/deliveries/1/resend'],
+  ['get', '/api/admin/closing-settings'],
+  ['put', '/api/admin/closing-settings'],
   ['get', '/api/admin/audit-logs'],
   ['get', '/api/admin/audit-logs/export'],
 ];
@@ -71,7 +73,7 @@ describe('cashier least privilege', () => {
     const agentA = await loginAs(app, a);
     const agentB = await loginAs(app, b);
     const saleA = (await agentA.post('/api/sales').send({ payment_method: 'cash', items: [{ product_id: product.id, quantity: 2 }] })).body;
-    const saleB = (await agentB.post('/api/sales').send({ payment_method: 'mobile_money', items: [{ product_id: product.id, quantity: 1 }] })).body;
+    const saleB = (await agentB.post('/api/sales').send({ payment_method: 'mtn_mobile_money', items: [{ product_id: product.id, quantity: 1 }] })).body;
     return { a, b, agentA, agentB, saleA, saleB, product };
   }
 

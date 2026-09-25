@@ -10,6 +10,9 @@ import Stock from './pages/Stock';
 import SalesHistory from './pages/SalesHistory';
 import Employees from './pages/Employees';
 import Reports from './pages/Reports';
+import Dashboard from './pages/Dashboard';
+import Corrections from './pages/Corrections';
+import { BusinessDayHistory, BusinessDayDetail } from './pages/BusinessDays';
 import Notifications from './pages/Notifications';
 import NotificationPreferences from './pages/NotificationPreferences';
 import AdminNotifications from './pages/admin/AdminNotifications';
@@ -35,7 +38,11 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route path="/" element={<POSPage />} />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/pos" element={<POSPage />} />
+        <Route path="/closing/corrections" element={<RequirePermission anyOf={['day.corrections.request', 'day.review']}><Corrections /></RequirePermission>} />
+        <Route path="/business-days" element={<RequirePermission anyOf={['day.history.view']}><BusinessDayHistory /></RequirePermission>} />
+        <Route path="/business-days/:id" element={<RequirePermission anyOf={['day.history.view']}><BusinessDayDetail /></RequirePermission>} />
         <Route path="/suppliers" element={<Suppliers />} />
         <Route path="/institutions" element={<Institutions />} />
         <Route path="/products" element={<Products />} />

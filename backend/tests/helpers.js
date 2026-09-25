@@ -35,14 +35,25 @@ async function waitForAppIdle(timeoutMs = 5000) {
 }
 
 /** Wipes every table (audit_logs included - triggers are bypassed in replica mode) and reseeds roles. */
-async function resetDb(attempt = 1) {
+async function resetDb({ openDay = true } = {}, attempt = 1) {
   await waitForAppIdle();
   try {
     await wipeAndSeed();
   } catch (err) {
-    if (err.code === '40P01' && attempt < 4) return resetDb(attempt + 1); // deadlock with straggling work
+    if (err.code === '40P01' && attempt < 4) return resetDb({ openDay }, attempt + 1); // deadlock with straggling work
     throw err;
   }
+  // Selling needs an OPEN business day; most suites just want one to exist.
+  if (openDay) await openBusinessDay();
+}
+
+/** Inserts an OPEN business day directly (bypasses the API/audit - fixture only). */
+async function openBusinessDay({ date, openingFloat = 0, openedBy = null } = {}) {
+  const businessDate = date || new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Kigali' }).format(new Date());
+  const [day] = await ownerDb()('business_days')
+    .insert({ business_date: businessDate, status: 'open', opening_float: openingFloat, opened_by: openedBy })
+    .returning('*');
+  return day;
 }
 
 async function wipeAndSeed() {
@@ -127,4 +138,4 @@ async function eventsOfType(type) {
   return ownerDb()('notification_events').where({ type }).orderBy('id');
 }
 
-module.exports = { ownerDb, closeOwner, resetDb, createUser, loginAs, locations, createProduct, stockOf, inbox, eventsOfType, PASSWORD };
+module.exports = { openBusinessDay, ownerDb, closeOwner, resetDb, createUser, loginAs, locations, createProduct, stockOf, inbox, eventsOfType, PASSWORD };

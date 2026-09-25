@@ -74,7 +74,11 @@ async function validateRule(trx, type, input) {
   if (def.mandatory) {
     if (next.enabled === false) errors.push(`${type} is mandatory and cannot be disabled`);
     if (!next.in_app && !next.email) errors.push(`${type} is mandatory and needs at least one channel`);
-    if (Array.isArray(next.recipient_roles) && !next.recipient_roles.length) errors.push(`${type} is mandatory and needs recipients`);
+    // Target-only types (e.g. "your correction was decided") reach the person
+    // concerned without any role list.
+    if (Array.isArray(next.recipient_roles) && !next.recipient_roles.length && !def.targetAlways) {
+      errors.push(`${type} is mandatory and needs recipients`);
+    }
   }
   if (def.emailAllowed === false && next.email) errors.push(`${type} cannot be sent by email`);
 

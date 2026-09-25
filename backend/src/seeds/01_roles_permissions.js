@@ -24,6 +24,8 @@ const PERMISSIONS = [
   'reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view',
   // Notifications / audit (admin territory)
   'notifications.manage', 'notifications.deliveries.manage', 'audit.view',
+  // Daily business cycle (opening/closing/corrections)
+  'day.view', 'day.open', 'day.close', 'day.corrections.request', 'day.review', 'day.reopen', 'day.history.view',
 ];
 
 const ROLE_PERMISSIONS = {
@@ -32,6 +34,8 @@ const ROLE_PERMISSIONS = {
   cashier: [
     'sales.create', 'sales.view', 'returns.process',
     'stock.view', 'products.view',
+    // Cashiers open the day and submit the shop's single daily closing
+    'day.view', 'day.open', 'day.close', 'day.corrections.request',
   ],
   store_keeper: [
     'sales.create', 'sales.view', 'sales.view_all', 'returns.process',
@@ -39,6 +43,8 @@ const ROLE_PERMISSIONS = {
     'products.manage', 'products.view',
     'suppliers.view', 'supplier_deliveries.manage', 'supplier_deliveries.view', 'supplier_payments.view',
     'institutions.view', 'institution_orders.manage', 'institution_orders.view', 'institution_payments.view',
+    // Store keepers see the boards but never open/close the financial day
+    'day.view',
   ],
   store_manager: PERMISSIONS, // full access, including employee management and settings
 };

@@ -10,7 +10,8 @@ import { useAuth } from '../context/AuthContext';
 import { useBusinessDay } from '../context/BusinessDayContext';
 import { useNotifications } from '../context/NotificationContext';
 import { OpenDayDialog, ClosingWizard, ReasonDialog, CorrectionDialog, METHODS } from '../components/businessDay/Dialogs';
-import ClosingReport, { PeopleList, HealthBadge, DAY_STATUS_TONE } from '../components/businessDay/ClosingReport';
+import ClosingReport, { PeopleList, HealthBadge, DAY_STATUS_TONE, dayTitle } from '../components/businessDay/ClosingReport';
+import { RequestOpeningDialog, MyOpeningRequest, OpeningRequestCards } from '../components/businessDay/OpeningRequests';
 import { PageHeader, Panel, Metric, StatusBadge, EmptyState, SkeletonPanel, ErrorState, DescriptionList } from '../ui/display';
 import Button from '../ui/Button';
 import { useToast } from '../ui/Toast';
@@ -21,16 +22,18 @@ function attentionItems({ data, t, hasPermission, unread }) {
   const items = [];
   const { today, last } = data;
   const schedule = today?.closing_schedule;
+  const openingRequests = data.opening_requests?.pending || [];
+  if (openingRequests.length) items.push({ tone: 'warning', icon: CalendarPlus, text: t('dashboard.attention.openingRequests', { count: openingRequests.length }), to: '/' });
   if (schedule?.state === 'overdue_critical') items.push({ tone: 'danger', icon: Clock, text: t('dashboard.attention.overdue', { time: schedule.expected_closing_time }), to: '/' });
   if (last?.closing?.variance_band === 'critical') {
-    items.push({ tone: 'danger', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: formatDate(last.day.business_date) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
+    items.push({ tone: 'danger', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: dayTitle(t, last.day) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
   }
   for (const d of data.awaiting_review || []) {
-    items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.awaitingReview', { date: formatDate(d.business_date) }), to: `/business-days/${d.id}` });
+    items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.awaitingReview', { date: dayTitle(t, d) }), to: `/business-days/${d.id}` });
   }
-  if (last?.day.recount_requested_at && hasPermission('day.close')) items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.recount', { date: formatDate(last.day.business_date) }) });
+  if (last?.day.recount_requested_at && hasPermission('day.close')) items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.recount', { date: dayTitle(t, last.day) }) });
   if (last?.closing?.variance_band === 'attention') {
-    items.push({ tone: 'warning', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: formatDate(last.day.business_date) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
+    items.push({ tone: 'warning', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: dayTitle(t, last.day) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
   }
   if (schedule?.state === 'due') items.push({ tone: 'warning', icon: Clock, text: t('dashboard.attention.due', { time: schedule.expected_closing_time }) });
   const inventory = (today || last)?.figures.inventory;
@@ -153,7 +156,18 @@ export default function Dashboard() {
   }
 
   const { today, last } = data;
+  // Only store managers open the day; cashiers and store keepers request it.
   const canOpen = hasPermission('day.open');
+  const canRequest = !canOpen && hasPermission('day.open.request');
+  const myRequest = data.opening_requests?.mine;
+  const requestPending = myRequest?.status === 'pending';
+  const pendingRequests = data.opening_requests?.pending || [];
+  const noDayHint = canOpen ? t('businessDay.noOpenDayHintCan')
+    : requestPending ? t('businessDay.request.pendingText', { time: formatTime(myRequest.requested_at) })
+      : canRequest ? t('businessDay.request.notOpen') : t('businessDay.noOpenDayHint');
+  const requestButton = canRequest && !requestPending && (
+    <Button variant="primary" icon={CalendarPlus} onClick={() => setDialog('request')}>{t('businessDay.request.button')}</Button>
+  );
   const canClose = hasPermission('day.close');
   const canReview = hasPermission('day.review');
   const canCorrect = hasPermission('day.corrections.request');
@@ -170,14 +184,11 @@ export default function Dashboard() {
 
   const lastActions = last && (
     <>
-      {canReview && last.day.status === 'closing_submitted' && !last.day.recount_requested_at && last.people.submitted_by?.id !== user.id && (
+      {canReview && last.day.status === 'closing_submitted' && !last.day.recount_requested_at && (
         <>
           <Button variant="primary" onClick={() => setDialog('accept')}>{t('businessDay.review.accept')}</Button>
           <Button onClick={() => setDialog('recount')}>{t('businessDay.review.recount')}</Button>
         </>
-      )}
-      {canReview && last.day.status === 'closing_submitted' && last.people.submitted_by?.id === user.id && (
-        <p className="field-hint">{t('businessDay.review.ownClosing')}</p>
       )}
       {canClose && last.day.recount_requested_at && <Button variant="primary" onClick={() => setDialog('close')}>{t('businessDay.close.recountTitle')}</Button>}
       {canCorrect && ['closing_submitted', 'closed', 'closed_with_adjustment'].includes(last.day.status) && (
@@ -210,7 +221,7 @@ export default function Dashboard() {
           <div className="day-strip-text">
             {today ? (
               <>
-                <strong>{t('dashboard.todayOpened', { date: formatDate(today.day.business_date, { weekday: true }) })}</strong>
+                <strong>{t('dashboard.todayOpened', { date: dayTitle(t, today.day, { weekday: true }) })}</strong>
                 <span className="text-secondary">
                   {t('dashboard.openedBy', { name: today.people.opened_by?.name || '—', time: formatTime(today.day.opened_at) })}
                   {today.people.closing_requested_by && ` · ${t('dashboard.closingRequestedBy', { name: today.people.closing_requested_by.name, time: formatTime(today.people.closing_requested_by.at) })}`}
@@ -220,13 +231,14 @@ export default function Dashboard() {
             ) : (
               <>
                 <strong>{t('businessDay.noOpenDay')}</strong>
-                <span className="text-secondary">{canOpen ? t('businessDay.noOpenDayHintCan') : t('businessDay.noOpenDayHint')}</span>
+                <span className="text-secondary">{noDayHint}</span>
               </>
             )}
           </div>
         </div>
         <div className="day-strip-actions">
           {!today && canOpen && <Button variant="primary" icon={CalendarPlus} onClick={() => setDialog('open')}>{t('businessDay.open.button')}</Button>}
+          {!today && requestButton}
           {today?.day.status === 'open' && canClose && <Button variant={schedule?.state === 'not_due' ? 'secondary' : 'primary'} icon={Play} onClick={startClosing}>{t('businessDay.close.start')}</Button>}
           {today?.day.status === 'closing_in_progress' && canClose && <Button variant="primary" onClick={() => setDialog('close')}>{t('businessDay.close.continue')}</Button>}
           {today && <HealthBadge health={today.health} />}
@@ -235,13 +247,17 @@ export default function Dashboard() {
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
+          {!today && pendingRequests.length > 0 && (
+            <OpeningRequestCards requests={pendingRequests} onDecided={(message) => done(message)} />
+          )}
+          {!today && <MyOpeningRequest request={myRequest} onRequestAgain={canRequest ? () => setDialog('request') : null} />}
           {isKeeper && today && <StockAlerts figures={today.figures} />}
           {today ? (
             <TodaySales today={today} comparison={data.comparison} />
           ) : (
             <Panel>
-              <EmptyState icon={CalendarPlus} title={t('dashboard.noSalesYet')} description={canOpen ? t('businessDay.noOpenDayHintCan') : t('businessDay.noOpenDayHint')}
-                action={canOpen ? <Button variant="primary" onClick={() => setDialog('open')}>{t('businessDay.open.button')}</Button> : null} />
+              <EmptyState icon={CalendarPlus} title={t('dashboard.noSalesYet')} description={noDayHint}
+                action={canOpen ? <Button variant="primary" onClick={() => setDialog('open')}>{t('businessDay.open.button')}</Button> : requestButton || null} />
             </Panel>
           )}
           {last ? (
@@ -272,6 +288,9 @@ export default function Dashboard() {
       {dialog === 'open' && (
         <OpenDayDialog previousCounted={last ? (last.corrected ? last.corrected.values.counted_cash.corrected : last.closing.counted_cash) : null}
           onClose={() => setDialog(null)} onDone={() => done(t('dashboard.toast.opened'))} />
+      )}
+      {dialog === 'request' && (
+        <RequestOpeningDialog businessDate={data.shop_date} onClose={() => setDialog(null)} onDone={() => done(t('businessDay.request.sent'))} />
       )}
       {dialog === 'close' && <ClosingWizard onClose={() => { setDialog(null); refresh(); }} onDone={() => done()} />}
       {dialog === 'accept' && (

@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { SIDES } = require('../finance/sides');
+const ledger = require('../finance/ledger');
 
 async function list(req, res) {
   const { type } = req.query;
@@ -12,7 +14,7 @@ async function getOne(req, res) {
   const institution = await db('institutions').where({ id }).first();
   if (!institution) return res.status(404).json({ error: 'Institution not found' });
 
-  const orders = await db('institution_orders').where({ institution_id: id }).orderBy('order_date', 'desc');
+  const orders = await ledger.listInvoices({ s: SIDES.customer, partyId: institution.id });
   res.json({ ...institution, orders });
 }
 

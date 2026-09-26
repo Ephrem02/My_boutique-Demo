@@ -2,7 +2,7 @@ const db = require('../config/db');
 const { AppError } = require('../utils/AppError');
 
 const INCREASING_TYPES = ['stock_in', 'returned', 'transfer_in'];
-const DECREASING_TYPES = ['sold', 'damaged', 'transfer_out'];
+const DECREASING_TYPES = ['sold', 'damaged', 'transfer_out', 'returned_to_supplier'];
 
 function toPositiveInt(value, field = 'quantity') {
   const n = Number(value);
@@ -70,8 +70,9 @@ async function applyMovement({
 
     await t('stock_levels').where({ id: existing.id }).update({ quantity: newQty });
 
-    // Stamped with the active business day when there is one; stock work
-    // (deliveries, transfers) isn't blocked by the financial day's state.
+    // Every stock movement belongs to a business day: with no day open, stock
+    // work (intake, transfers, damage, deliveries) is refused like sales. It
+    // is not paused while the closing is in progress.
     const { activeDayId } = require('../businessDay/businessDayService');
     const businessDayId = await activeDayId(t);
 

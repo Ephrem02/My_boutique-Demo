@@ -185,8 +185,13 @@ async function voidSale({ saleId, voidedBy }) {
  * restrictToCashierId: when set (callers without sales.view_all), the sale
  * must belong to that cashier - otherwise it's reported as not found.
  */
-async function processReturn({ saleItemId, quantity, reason, restocked, processedBy, restrictToCashierId = null }) {
+const RETURN_REASONS = ['defective', 'damaged', 'wrong_item', 'expired', 'poor_quality', 'changed_mind', 'other'];
+
+async function processReturn({ saleItemId, quantity, reason, reasonCode = null, restocked, processedBy, restrictToCashierId = null }) {
   const qty = toPositiveInt(quantity);
+  if (reasonCode !== null && reasonCode !== undefined && reasonCode !== '' && !RETURN_REASONS.includes(reasonCode)) {
+    throw new AppError(`reason_code must be one of: ${RETURN_REASONS.join(', ')}`, 422);
+  }
   return db.transaction(async (trx) => {
     // Refunds are today's transactions (even for an older sale) and need an OPEN day
     const day = await businessDay().requireOpenDay(trx);
@@ -214,6 +219,7 @@ async function processReturn({ saleItemId, quantity, reason, restocked, processe
         sale_item_id: saleItem.id,
         quantity: qty,
         reason,
+        reason_code: reasonCode || null,
         restocked: !!restocked,
         processed_by: processedBy,
         business_day_id: day.id,

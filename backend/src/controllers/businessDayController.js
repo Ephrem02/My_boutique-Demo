@@ -2,6 +2,7 @@ const db = require('../config/db');
 const service = require('../businessDay/businessDayService');
 const boards = require('../businessDay/boards');
 const corrections = require('../businessDay/corrections');
+const openingRequests = require('../businessDay/openingRequests');
 const closingSettings = require('../businessDay/settings');
 const { handleServiceError } = require('../utils/handleServiceError');
 const { can } = require('../middleware/rbac');
@@ -25,6 +26,21 @@ module.exports = {
 
   // POST /api/business-days/open { opening_float }
   open: handle(async (req, res) => res.status(201).json(await service.openDay({ req, openingFloat: req.body?.opening_float }))),
+
+  // GET /api/business-days/opening-requests?status= - reviewers see all, requesters their own
+  listOpeningRequests: handle(async (req, res) => {
+    res.json(await openingRequests.listRequests({ user: req.user, canReview: can(req, 'day.open.review'), status: req.query.status }));
+  }),
+
+  // POST /api/business-days/opening-requests { opening_float, reason, note }
+  requestOpening: handle(async (req, res) => {
+    const { opening_float: openingFloat, reason, note } = req.body || {};
+    res.status(201).json(await openingRequests.createRequest({ req, openingFloat, reason, note }));
+  }),
+
+  // POST /api/business-days/opening-requests/:id/approve | reject { comment }
+  approveOpening: handle(async (req, res) => res.json(await openingRequests.approveRequest({ req, id: dayId(req), comment: req.body?.comment }))),
+  rejectOpening: handle(async (req, res) => res.json(await openingRequests.rejectRequest({ req, id: dayId(req), comment: req.body?.comment }))),
 
   // POST /api/business-days/current/closing/start | cancel
   startClosing: handle(async (req, res) => res.json(await service.startClosing({ req }))),

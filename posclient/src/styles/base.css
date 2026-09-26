@@ -172,6 +172,23 @@ hr {
   color: var(--color-warning-fg);
 }
 
+.text-info {
+  color: var(--color-info-fg);
+}
+
+/* Inline action that reads as a link (e.g. a statement entry opening its invoice) */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .text-success {
   color: var(--color-success-fg);
 }

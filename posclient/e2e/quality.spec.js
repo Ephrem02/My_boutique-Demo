@@ -9,9 +9,9 @@ import AxeBuilder from '@axe-core/playwright';
 import { loginAs, settle } from './helpers';
 
 const SCREENS = [
-  ['cashier', '/'], ['cashier', '/pos'], ['cashier', '/sales-history'], ['cashier', '/notifications'], ['cashier', '/settings'],
-  ['keeper', '/'], ['keeper', '/stock'], ['keeper', '/products'],
-  ['manager', '/'], ['manager', '/products'], ['manager', '/suppliers'], ['manager', '/institutions'], ['manager', '/reports'],
+  ['cashier', '/'], ['cashier', '/pos'], ['cashier', '/sales-history'], ['cashier', '/institutions'], ['cashier', '/notifications'], ['cashier', '/settings'],
+  ['keeper', '/'], ['keeper', '/stock'], ['keeper', '/products'], ['keeper', '/suppliers'],
+  ['manager', '/'], ['manager', '/products'], ['manager', '/suppliers'], ['manager', '/institutions'], ['manager', '/finance'], ['manager', '/reports'],
   ['manager', '/business-days'], ['manager', '/closing/corrections'], ['manager', '/admin'], ['manager', '/admin/monitoring'],
   ['manager', '/admin/notifications/rules'], ['manager', '/admin/audit'], ['manager', '/admin/users'], ['manager', '/admin/closing'],
 ];

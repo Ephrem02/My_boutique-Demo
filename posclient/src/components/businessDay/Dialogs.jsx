@@ -148,6 +148,8 @@ export function ClosingWizard({ onClose, onDone }) {
           { label: t('businessDay.fig.openingFloat'), value: formatRwf(f.cash.opening_float) },
           { label: `+ ${t('businessDay.fig.cashSales')}`, value: formatRwf(f.cash.cash_sales) },
           { label: `− ${t('businessDay.fig.cashRefunds')}`, value: formatRwf(f.cash.cash_refunds) },
+          ...(f.cash.account_cash_in ? [{ label: `+ ${t('businessDay.fig.accountCashIn')}`, value: formatRwf(f.cash.account_cash_in) }] : []),
+          ...(f.cash.account_cash_out ? [{ label: `− ${t('businessDay.fig.accountCashOut')}`, value: formatRwf(f.cash.account_cash_out) }] : []),
           { label: `= ${t('businessDay.fig.expectedCash')}`, value: formatRwf(expected), strong: true },
         ]} />
         <Field label={t('businessDay.close.counted')} required className="wizard-count">
@@ -256,7 +258,7 @@ export function ReasonDialog({ title, description, label, minLength = 0, require
   );
 }
 
-const CORRECTION_FIELDS = ['counted_cash', 'opening_float', 'cash_sales', 'cash_refunds', 'mtn_mobile_money', 'airtel_money', 'card'];
+const CORRECTION_FIELDS = ['counted_cash', 'opening_float', 'cash_sales', 'cash_refunds', 'account_cash_in', 'account_cash_out', 'mtn_mobile_money', 'airtel_money', 'card'];
 
 export function CorrectionDialog({ board, onClose, onDone }) {
   const { t } = useTranslation();

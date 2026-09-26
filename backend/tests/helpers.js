@@ -48,10 +48,10 @@ async function resetDb({ openDay = true } = {}, attempt = 1) {
 }
 
 /** Inserts an OPEN business day directly (bypasses the API/audit - fixture only). */
-async function openBusinessDay({ date, openingFloat = 0, openedBy = null } = {}) {
+async function openBusinessDay({ date, openingFloat = 0, openedBy = null, openedAt } = {}) {
   const businessDate = date || new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Kigali' }).format(new Date());
   const [day] = await ownerDb()('business_days')
-    .insert({ business_date: businessDate, status: 'open', opening_float: openingFloat, opened_by: openedBy })
+    .insert({ business_date: businessDate, status: 'open', opening_float: openingFloat, opened_by: openedBy, ...(openedAt && { opened_at: openedAt }) })
     .returning('*');
   return day;
 }

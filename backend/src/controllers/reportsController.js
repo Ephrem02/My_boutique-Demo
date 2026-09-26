@@ -160,14 +160,15 @@ async function financialSummary(req, res) {
   if (to) shrinkageQuery.where('shrinkage_records.recorded_date', '<=', to);
   const shrinkageRow = await shrinkageQuery.first();
 
-  const supplierPayables = await db('supplier_deliveries')
-    .whereIn('status', ['unpaid', 'partial'])
-    .select(db.raw('COALESCE(SUM(total_amount - amount_paid), 0) as amount'))
+  // Outstanding balances come from the ledger views (never a stored "paid" flag)
+  const supplierPayables = await db('supplier_invoice_balances')
+    .where('balance', '>', 0)
+    .select(db.raw('COALESCE(SUM(balance), 0) as amount'))
     .first();
 
-  const institutionReceivables = await db('institution_orders')
-    .whereIn('payment_status', ['unpaid', 'partial'])
-    .select(db.raw('COALESCE(SUM(total_amount - amount_paid), 0) as amount'))
+  const institutionReceivables = await db('customer_invoice_balances')
+    .where('balance', '>', 0)
+    .select(db.raw('COALESCE(SUM(balance), 0) as amount'))
     .first();
 
   const posRevenue = Number(revenueRow.revenue);

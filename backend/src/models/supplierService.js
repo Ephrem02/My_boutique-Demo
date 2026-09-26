@@ -2,33 +2,44 @@ const db = require('../config/db');
 const { AppError } = require('../utils/AppError');
 const { applyMovement, inLockOrder, toPositiveInt } = require('./stockService');
 const { emit, actorName } = require('../notifications/notificationService');
+const { audit } = require('../audit/auditService');
+const { formatRwf } = require('../utils/sanitize');
+const { SIDES } = require('../finance/sides');
+const ledger = require('../finance/ledger');
 
-function toPositiveAmount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) throw new AppError('Payment amount must be positive');
-  return n;
-}
+const s = SIDES.supplier;
 
 /**
- * Records a supplier delivery: the delivery header, its line items, and a
- * stock_in movement per item (into the store room by default) - all in one
- * transaction so a delivery can never exist without matching stock, or vice
- * versa.
+ * Records goods received from a supplier - a purchase invoice: the header
+ * (supplier's reference number, who received it), its lines (with batch and
+ * expiry where applicable) and a stock_in movement per line into the store
+ * room, all in one transaction so goods and the payable can never disagree.
  *
- * items: [{ product_id, quantity, unit_cost }]
+ * `payment` ({ amount, method, reference_no }) records money paid on receipt
+ * as the invoice's first ledger transaction; without it the goods are on
+ * credit. Paying suppliers needs supplier_payments.manage (checked by the
+ * controller). Balances/status come from the ledger, never stored here.
+ *
+ * items: [{ product_id, quantity, unit_cost, batch_no?, expiry_date? }]
  */
-async function createDelivery({ supplierId, deliveryDate, paymentDueDate, items, recordedBy }) {
+async function createDelivery({ req, supplierId, deliveryDate, paymentDueDate, referenceNo, notes, items, payment }) {
   if (!items || !items.length) throw new AppError('A delivery needs at least one item');
   const lines = inLockOrder(items).map((i) => {
     const unitCost = Number(i.unit_cost);
     if (!Number.isFinite(unitCost) || unitCost < 0) throw new AppError('unit_cost must be a non-negative number');
+    if (i.expiry_date && Number.isNaN(Date.parse(i.expiry_date))) throw new AppError('expiry_date must be a date (YYYY-MM-DD)', 422);
     return { ...i, quantity: toPositiveInt(i.quantity), unit_cost: unitCost };
   });
+  const receivedOn = ledger.parseDate(deliveryDate, 'delivery_date');
+  const pay = payment && Number(payment.amount) > 0
+    ? { amount: ledger.parseAmount(payment.amount, 'payment amount'), method: ledger.parseMethod(payment.method), referenceNo: payment.reference_no }
+    : null;
 
   const storeRoom = await db('stock_locations').where({ name: 'store_room' }).first();
   if (!storeRoom) throw new AppError('store_room location is not configured');
 
-  const totalAmount = lines.reduce((sum, i) => sum + i.quantity * i.unit_cost, 0);
+  const totalAmount = ledger.n(lines.reduce((sum, i) => sum + i.quantity * i.unit_cost, 0));
+  const recordedBy = req.user.id;
 
   return db.transaction(async (trx) => {
     const supplier = await trx('suppliers').where({ id: supplierId }).first();
@@ -37,24 +48,25 @@ async function createDelivery({ supplierId, deliveryDate, paymentDueDate, items,
     const [delivery] = await trx('supplier_deliveries')
       .insert({
         supplier_id: supplierId,
-        delivery_date: deliveryDate,
+        delivery_date: receivedOn,
         payment_due_date: paymentDueDate || null,
+        reference_no: ledger.text(referenceNo, 100),
+        notes: ledger.text(notes, 1000),
         total_amount: totalAmount,
-        amount_paid: 0,
-        status: 'unpaid',
         recorded_by: recordedBy,
+        received_by: recordedBy,
       })
       .returning('*');
 
     const itemRows = await trx('supplier_delivery_items')
-      .insert(
-        lines.map((i) => ({
-          delivery_id: delivery.id,
-          product_id: i.product_id,
-          quantity: i.quantity,
-          unit_cost: i.unit_cost,
-        }))
-      )
+      .insert(lines.map((i) => ({
+        delivery_id: delivery.id,
+        product_id: i.product_id,
+        quantity: i.quantity,
+        unit_cost: i.unit_cost,
+        batch_no: ledger.text(i.batch_no, 100),
+        expiry_date: i.expiry_date || null,
+      })))
       .returning('*');
 
     for (const item of lines) {
@@ -73,6 +85,17 @@ async function createDelivery({ supplierId, deliveryDate, paymentDueDate, items,
       );
     }
 
+    await audit(req, {
+      action: 'supplier_delivery.create', entityType: 'supplier_delivery', entityId: delivery.id,
+      newValues: { supplier_id: supplierId, reference_no: delivery.reference_no, total_amount: totalAmount, lines: lines.length, paid_on_receipt: pay?.amount || 0 },
+    }, { trx, required: true });
+
+    if (pay) {
+      await ledger.insertPayment(trx, {
+        req, s, invoice: delivery, amount: pay.amount, method: pay.method, referenceNo: pay.referenceNo, txnDate: receivedOn, note: 'Paid on receipt',
+      });
+    }
+
     await emit(trx, {
       type: 'DELIVERY_RECEIVED',
       dedupKey: `DELIVERY_RECEIVED:delivery:${delivery.id}`,
@@ -82,79 +105,14 @@ async function createDelivery({ supplierId, deliveryDate, paymentDueDate, items,
       params: {
         supplier_name: supplier.name,
         delivery_id: delivery.id,
-        amount_rwf: totalAmount,
+        amount_rwf: formatRwf(totalAmount),
         due_date: paymentDueDate || 'not set',
         actor_name: await actorName(trx, recordedBy),
       },
     });
 
-    return { ...delivery, items: itemRows };
+    return { ...delivery, ...(await ledger.balanceOf(trx, s, delivery.id)), items: itemRows };
   });
 }
 
-/**
- * Records a payment against a delivery and recomputes its paid/partial/unpaid
- * status. Allows overpayment to be flagged rather than silently rejected,
- * since real-world reconciliation sometimes needs that visible - it raises a
- * mandatory OVERPAYMENT alert. The delivery row is locked so two payments
- * recorded at once can't both read the same amount_paid.
- */
-async function recordPayment({ deliveryId, amount, paidDate, method, recordedBy }) {
-  const value = toPositiveAmount(amount);
-
-  return db.transaction(async (trx) => {
-    const delivery = await trx('supplier_deliveries').where({ id: deliveryId }).forUpdate().first();
-    if (!delivery) throw new AppError('Delivery not found', 404);
-
-    const [payment] = await trx('supplier_payments')
-      .insert({ delivery_id: deliveryId, amount: value, paid_date: paidDate, method, recorded_by: recordedBy })
-      .returning('*');
-
-    const newPaidTotal = Number(delivery.amount_paid) + value;
-    let status = 'partial';
-    if (newPaidTotal <= 0) status = 'unpaid';
-    else if (newPaidTotal >= Number(delivery.total_amount)) status = 'paid';
-
-    const [updatedDelivery] = await trx('supplier_deliveries')
-      .where({ id: deliveryId })
-      .update({ amount_paid: newPaidTotal, status })
-      .returning('*');
-
-    if (newPaidTotal > Number(delivery.total_amount)) {
-      const supplier = await trx('suppliers').where({ id: delivery.supplier_id }).first('name');
-      await emit(trx, {
-        type: 'OVERPAYMENT',
-        dedupKey: `OVERPAYMENT:supplier_payment:${payment.id}`,
-        entityType: 'supplier_delivery',
-        entityId: delivery.id,
-        actorUserId: recordedBy,
-        params: {
-          party_type: 'supplier delivery',
-          party_name: supplier.name,
-          reference_id: delivery.id,
-          total_rwf: Number(delivery.total_amount),
-          paid_rwf: newPaidTotal,
-        },
-      });
-    }
-
-    return { payment, delivery: updatedDelivery };
-  });
-}
-
-/** Suppliers with an outstanding balance, for the "unpaid suppliers" view. */
-async function getUnpaidSummary() {
-  return db('supplier_deliveries')
-    .select(
-      'suppliers.id as supplier_id', 'suppliers.name as supplier_name',
-      db.raw('SUM(supplier_deliveries.total_amount - supplier_deliveries.amount_paid) as balance_due'),
-      db.raw('COUNT(*) as unpaid_deliveries')
-    )
-    .join('suppliers', 'suppliers.id', 'supplier_deliveries.supplier_id')
-    .whereIn('supplier_deliveries.status', ['unpaid', 'partial'])
-    .groupBy('suppliers.id', 'suppliers.name')
-    .havingRaw('SUM(supplier_deliveries.total_amount - supplier_deliveries.amount_paid) > 0')
-    .orderBy('balance_due', 'desc');
-}
-
-module.exports = { createDelivery, recordPayment, getUnpaidSummary, toPositiveAmount };
+module.exports = { createDelivery };

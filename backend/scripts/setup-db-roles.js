@@ -4,7 +4,8 @@
 //
 // The runtime role gets SELECT/INSERT/UPDATE/DELETE on application tables,
 // but only SELECT/INSERT on the append-only history tables (audit_logs,
-// daily_closings, closing_adjustments) and nothing on the migration tables,
+// daily_closings, closing_adjustments, the ledger transaction and line
+// tables) and nothing on the migration tables,
 // so the API itself can never rewrite history or the schema.
 //
 // Usage: node scripts/setup-db-roles.js   (NODE_ENV picks the database)
@@ -45,7 +46,10 @@ async function setupDbRoles({ environment = process.env.NODE_ENV || 'development
 
     await owner.raw(`REVOKE ALL ON knex_migrations, knex_migrations_lock FROM ${appUser}`);
     // Append-only history tables: read and add, never change or remove.
-    for (const table of ['audit_logs', 'daily_closings', 'closing_adjustments']) {
+    for (const table of ['audit_logs', 'daily_closings', 'closing_adjustments',
+      // financial ledger: transactions and invoice/return lines are never edited
+      'supplier_transactions', 'customer_transactions', 'supplier_delivery_items', 'institution_order_items',
+      'supplier_return_items', 'customer_return_items']) {
       if (await owner.schema.hasTable(table)) {
         await owner.raw(`REVOKE ALL ON ${table} FROM ${appUser}`);
         await owner.raw(`GRANT SELECT, INSERT ON ${table} TO ${appUser}`);

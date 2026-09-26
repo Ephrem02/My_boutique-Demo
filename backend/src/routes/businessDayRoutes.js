@@ -9,6 +9,11 @@ router.use(authenticate);
 
 router.get('/dashboard', requirePermission('day.view'), days.dashboard);
 router.post('/open', requirePermission('day.open'), days.open);
+// Opening requests (declared before /:id so the path isn't taken for an id)
+router.get('/opening-requests', requirePermission('day.open.request', 'day.open.review'), days.listOpeningRequests);
+router.post('/opening-requests', requirePermission('day.open.request'), days.requestOpening);
+router.post('/opening-requests/:id/approve', requirePermission('day.open.review'), days.approveOpening);
+router.post('/opening-requests/:id/reject', requirePermission('day.open.review'), days.rejectOpening);
 router.get('/current/closing/preview', requirePermission('day.close'), days.preview);
 router.post('/current/closing/start', requirePermission('day.close'), days.startClosing);
 router.post('/current/closing/cancel', requirePermission('day.close'), days.cancelClosing);

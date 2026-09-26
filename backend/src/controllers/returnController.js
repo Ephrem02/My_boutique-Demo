@@ -23,9 +23,9 @@ async function list(req, res) {
   res.json(await query);
 }
 
-// POST /api/returns { sale_item_id, quantity, reason, restocked }
+// POST /api/returns { sale_item_id, quantity, reason, reason_code, restocked }
 async function create(req, res) {
-  const { sale_item_id, quantity, reason, restocked } = req.body;
+  const { sale_item_id, quantity, reason, reason_code, restocked } = req.body;
   if (!sale_item_id || !quantity) {
     return res.status(400).json({ error: 'sale_item_id and quantity are required' });
   }
@@ -34,6 +34,7 @@ async function create(req, res) {
       saleItemId: sale_item_id,
       quantity,
       reason,
+      reasonCode: reason_code,
       restocked,
       processedBy: req.user.id,
       restrictToCashierId: ownSalesOnly(req) ? req.user.id : null,
@@ -42,7 +43,7 @@ async function create(req, res) {
       action: 'sale.refund',
       entityType: 'return',
       entityId: returnRecord.id,
-      newValues: { sale_item_id: returnRecord.sale_item_id, quantity: returnRecord.quantity, restocked: returnRecord.restocked, reason: returnRecord.reason },
+      newValues: { sale_item_id: returnRecord.sale_item_id, quantity: returnRecord.quantity, restocked: returnRecord.restocked, reason: returnRecord.reason, reason_code: returnRecord.reason_code },
     });
     res.status(201).json(returnRecord);
   } catch (err) {

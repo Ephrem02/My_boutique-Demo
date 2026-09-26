@@ -11,6 +11,7 @@ import Stock from './pages/Stock';
 import SalesHistory from './pages/SalesHistory';
 import Employees from './pages/Employees';
 import Reports from './pages/Reports';
+import Finance from './pages/Finance';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Dashboard from './pages/Dashboard';
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="/products" element={guard(['products.view'], <Products />)} />
         <Route path="/stock" element={guard(['stock.view'], <Stock />)} />
         <Route path="/reports" element={guard(['reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view'], <Reports />)} />
+        <Route path="/finance" element={guard(['reports.financial.view'], <Finance />)} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/closing/corrections" element={guard(['day.corrections.request', 'day.review'], <Corrections />)} />

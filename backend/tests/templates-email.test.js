@@ -199,7 +199,7 @@ describe('email delivery worker', () => {
     const owner = ownerDb();
     const [supplier] = await owner('suppliers').insert({ name: 'Acme' }).returning('*');
     const keeper = await createUser('store_keeper');
-    const base = { supplier_id: supplier.id, delivery_date: '2026-01-01', total_amount: 1000, amount_paid: 0, status: 'unpaid', recorded_by: keeper.id };
+    const base = { supplier_id: supplier.id, delivery_date: '2026-01-01', total_amount: 1000, recorded_by: keeper.id };
     await owner('supplier_deliveries').insert([
       { ...base, payment_due_date: owner.raw("current_date - interval '2 days'") },
       { ...base, payment_due_date: owner.raw("current_date + interval '1 day'") },

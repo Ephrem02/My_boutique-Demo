@@ -1,56 +1,42 @@
-const db = require('../config/db');
 const { handleServiceError } = require('../utils/handleServiceError');
-const { createOrder, markDelivered, recordPayment, getUnpaidSummary } = require('../models/institutionService');
+const { can } = require('../middleware/rbac');
+const { createOrder, markDelivered } = require('../models/institutionService');
+const { SIDES } = require('../finance/sides');
+const ledger = require('../finance/ledger');
 
-// GET /api/institution-orders?institution_id=&delivery_status=&payment_status=
+const s = SIDES.customer;
+
+// GET /api/institution-orders?institution_id=&delivery_status=&payment_status=&overdue=1
 async function list(req, res) {
-  const { institution_id, delivery_status, payment_status } = req.query;
-  const query = db('institution_orders')
-    .select('institution_orders.*', 'institutions.name as institution_name')
-    .join('institutions', 'institutions.id', 'institution_orders.institution_id')
-    .orderBy('institution_orders.order_date', 'desc');
-
-  if (institution_id) query.where('institution_orders.institution_id', institution_id);
-  if (delivery_status) query.where('institution_orders.delivery_status', delivery_status);
-  if (payment_status) query.where('institution_orders.payment_status', payment_status);
-
-  res.json(await query);
+  const { institution_id, delivery_status, payment_status, overdue } = req.query;
+  let rows = await ledger.listInvoices({ s, partyId: institution_id, status: payment_status, overdue: overdue === '1' || overdue === 'true' });
+  if (delivery_status) rows = rows.filter((r) => r.delivery_status === delivery_status);
+  res.json(rows);
 }
 
-// GET /api/institution-orders/:id
+// GET /api/institution-orders/:id - lines, balance breakdown, transactions and returns
 async function getOne(req, res) {
-  const { id } = req.params;
-  const order = await db('institution_orders')
-    .select('institution_orders.*', 'institutions.name as institution_name')
-    .join('institutions', 'institutions.id', 'institution_orders.institution_id')
-    .where('institution_orders.id', id)
-    .first();
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-
-  const items = await db('institution_order_items')
-    .select('institution_order_items.*', 'products.name as product_name', 'products.sku')
-    .join('products', 'products.id', 'institution_order_items.product_id')
-    .where('order_id', id);
-
-  const payments = await db('institution_payments').where({ order_id: id }).orderBy('paid_date');
-
-  res.json({ ...order, items, payments });
+  const detail = await ledger.invoiceDetail({ s, invoiceId: req.params.id });
+  if (!detail) return res.status(404).json({ error: 'Order not found' });
+  res.json(detail);
 }
 
 // POST /api/institution-orders
-// { institution_id, order_date, delivery_date, items: [{ product_id, quantity, unit_price }] }
+// { institution_id, order_date, delivery_date, due_date, discount_amount, notes,
+//   items: [{ product_id, quantity, unit_price }],
+//   payment: { amount, method, reference_no } }   <- optional, paid at the sale
 async function create(req, res) {
-  const { institution_id, order_date, delivery_date, items } = req.body;
+  const { institution_id, order_date, delivery_date, due_date, discount_amount, notes, items, payment } = req.body;
   if (!institution_id || !order_date || !items || !items.length) {
     return res.status(400).json({ error: 'institution_id, order_date and at least one item are required' });
   }
+  if (payment && Number(payment.amount) > 0 && !can(req, 'institution_payments.manage')) {
+    return res.status(403).json({ error: 'You do not have permission to record customer payments', required: ['institution_payments.manage'] });
+  }
   try {
     const order = await createOrder({
-      institutionId: institution_id,
-      orderDate: order_date,
-      deliveryDate: delivery_date,
-      items,
-      recordedBy: req.user.id,
+      req, institutionId: institution_id, orderDate: order_date, deliveryDate: delivery_date, dueDate: due_date,
+      discountAmount: discount_amount, notes, items, payment,
     });
     res.status(201).json(order);
   } catch (err) {
@@ -60,39 +46,16 @@ async function create(req, res) {
 
 // POST /api/institution-orders/:id/deliver
 async function deliver(req, res) {
-  const { id } = req.params;
   try {
-    const order = await markDelivered({ orderId: id, performedBy: req.user.id });
-    res.json(order);
+    res.json(await markDelivered({ orderId: req.params.id, performedBy: req.user.id }));
   } catch (err) {
     handleServiceError(err, res);
   }
 }
 
-// POST /api/institution-orders/:id/payments
-async function pay(req, res) {
-  const { id } = req.params;
-  const { amount, paid_date, method } = req.body;
-  if (!amount || !paid_date) {
-    return res.status(400).json({ error: 'amount and paid_date are required' });
-  }
-  try {
-    const result = await recordPayment({
-      orderId: id,
-      amount,
-      paidDate: paid_date,
-      method,
-      recordedBy: req.user.id,
-    });
-    res.status(201).json(result);
-  } catch (err) {
-    handleServiceError(err, res);
-  }
-}
-
-// GET /api/institution-orders/unpaid-summary
+// GET /api/institution-orders/unpaid-summary - customers who owe us (or hold credit)
 async function unpaidSummary(req, res) {
-  res.json(await getUnpaidSummary());
+  res.json((await ledger.balancesByParty({ s })).map((r) => ({ ...r, institution_id: r.party_id, institution_name: r.party_name })));
 }
 
-module.exports = { list, getOne, create, deliver, pay, unpaidSummary };
+module.exports = { list, getOne, create, deliver, unpaidSummary };

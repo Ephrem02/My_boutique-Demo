@@ -14,10 +14,14 @@ const PERMISSIONS = [
   'suppliers.view', 'suppliers.manage',
   'supplier_deliveries.view', 'supplier_deliveries.manage',
   'supplier_payments.view', 'supplier_payments.manage',
-  // Institutions
+  'supplier_returns.manage',
+  // Institutions (customers)
   'institutions.view', 'institutions.manage',
   'institution_orders.view', 'institution_orders.manage',
   'institution_payments.view', 'institution_payments.manage',
+  'customer_returns.manage', 'customer_returns.approve',
+  // Ledger corrections: refunds, credit applications, reversals (managers)
+  'ledger.manage',
   // Pricing / employees / settings (admin territory)
   'pricing.manage', 'employees.manage', 'settings.manage',
   // Reporting
@@ -26,6 +30,7 @@ const PERMISSIONS = [
   'notifications.manage', 'notifications.deliveries.manage', 'audit.view',
   // Daily business cycle (opening/closing/corrections)
   'day.view', 'day.open', 'day.close', 'day.corrections.request', 'day.review', 'day.reopen', 'day.history.view',
+  'day.open.request', 'day.open.review',
 ];
 
 const ROLE_PERMISSIONS = {
@@ -34,19 +39,28 @@ const ROLE_PERMISSIONS = {
   cashier: [
     'sales.create', 'sales.view', 'returns.process',
     'stock.view', 'products.view',
-    // Cashiers open the day and submit the shop's single daily closing
-    'day.view', 'day.open', 'day.close', 'day.corrections.request',
+    // Customer accounts: record credit sales and payments, see balances,
+    // process returns (large ones wait for a manager)
+    'institutions.view', 'institution_orders.view', 'institution_orders.manage',
+    'institution_payments.view', 'institution_payments.manage', 'customer_returns.manage',
+    // Cashiers ask a manager to open the day (never open it directly) and
+    // submit the shop's single daily closing
+    'day.view', 'day.open.request', 'day.close', 'day.corrections.request',
   ],
   store_keeper: [
     'sales.create', 'sales.view', 'sales.view_all', 'returns.process',
     'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view',
     'products.manage', 'products.view',
-    'suppliers.view', 'supplier_deliveries.manage', 'supplier_deliveries.view', 'supplier_payments.view',
+    // Receive goods and return them to suppliers; never pay suppliers
+    'suppliers.view', 'supplier_deliveries.manage', 'supplier_deliveries.view', 'supplier_payments.view', 'supplier_returns.manage',
     'institutions.view', 'institution_orders.manage', 'institution_orders.view', 'institution_payments.view',
-    // Store keepers see the boards but never open/close the financial day
-    'day.view',
+    // Store keepers ask a manager to open the day (never open it directly)
+    // and can close it like a cashier
+    'day.view', 'day.open.request', 'day.close',
   ],
-  store_manager: PERMISSIONS, // full access, including employee management and settings
+  // Full access, including employee management and settings. Managers open the
+  // day directly, so they never file opening requests (they approve them).
+  store_manager: PERMISSIONS.filter((code) => code !== 'day.open.request'),
 };
 
 exports.seed = async function (knex) {

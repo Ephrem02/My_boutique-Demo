@@ -446,8 +446,8 @@ async function monitoring(req, res) {
     refunds_7d: await countWhere('returns', (q) => q.where('created_at', '>=', since(7))),
     large_sales_7d: await countWhere('notification_events', (q) => q.where('type', 'HIGH_VALUE_SALE').where('created_at', '>=', since(7))),
     overpayments_30d: await countWhere('notification_events', (q) => q.where('type', 'OVERPAYMENT').where('created_at', '>=', since(30))),
-    overdue_supplier_payments: await countWhere('supplier_deliveries', (q) =>
-      q.whereIn('status', ['unpaid', 'partial']).whereNotNull('payment_due_date').where('payment_due_date', '<', db.raw('current_date'))),
+    overdue_supplier_payments: await countWhere('supplier_invoice_balances', (q) => q.where('overdue', true)),
+    overdue_customer_payments: await countWhere('customer_invoice_balances', (q) => q.where('overdue', true)),
     shrinkage_events_30d: await countWhere('shrinkage_records', (q) => q.where('created_at', '>=', since(30))),
   };
 

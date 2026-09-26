@@ -2,8 +2,9 @@
 // CLOSING_SUBMITTED -> CLOSED (-> CLOSED_WITH_ADJUSTMENT via corrections).
 //
 // Principles:
-//  - One shop-wide day; one OPEN/CLOSING_IN_PROGRESS day at a time and one
-//    day per calendar date (both enforced by unique indexes).
+//  - One shop-wide day; one OPEN/CLOSING_IN_PROGRESS day at a time. A date
+//    may have several sessions (session_no). Only store managers open a
+//    session - directly, or by approving an opening request (openingRequests.js).
 //  - Every state change locks the business_days row, re-checks the state and
 //    is audited in the same transaction (required), so concurrent requests
 //    can't produce two closings or skip a step.
@@ -27,9 +28,9 @@ function signedRwf(value) {
 
 function dayState(day) {
   if (!day) return null;
-  const { id, business_date: date, status, opened_by, opened_at, closing_started_by, closing_started_at, submitted_by, submitted_at,
+  const { id, business_date: date, session_no, status, opened_by, opened_at, closing_started_by, closing_started_at, submitted_by, submitted_at,
     acceptance, accepted_by, accepted_at, recount_requested_at, reopened_count, closed_at } = day;
-  return { id, business_date: date, status, opened_by, opened_at, closing_started_by, closing_started_at, submitted_by, submitted_at,
+  return { id, business_date: date, session_no, status, opened_by, opened_at, closing_started_by, closing_started_at, submitted_by, submitted_at,
     acceptance, accepted_by, accepted_at, recount_requested_at, reopened_count, closed_at };
 }
 
@@ -40,6 +41,17 @@ function dateOnly(value) {
   const d = new Date(value);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+/** Date for notifications and messages, with the session when there is more than one. */
+function dayLabel(day) {
+  const date = dateOnly(day.business_date);
+  return day.session_no > 1 ? `${date} (session ${day.session_no})` : date;
+}
+
+const isManager = (req) => req.user.permissions.includes('day.review');
+
+/** Newest session first: by date, then session number. */
+const newestFirst = (qb) => qb.orderBy('business_date', 'desc').orderBy('session_no', 'desc');
 
 async function lockDay(trx, id) {
   const day = await trx('business_days').where({ id }).forUpdate().first();
@@ -62,13 +74,19 @@ async function requireOpenDay(trx) {
   if (day) return day;
   const closing = await trx('business_days').where({ status: 'closing_in_progress' }).first();
   if (closing) throw new AppError('Closing is in progress - sales and refunds are paused until the next business day is opened', 409);
-  throw new AppError('No business day is open. A cashier or manager must open the business day before selling.', 409);
+  throw new AppError(NOT_OPEN_MESSAGE, 409);
 }
 
-/** For stock movements: the active day's id if there is one (stock work isn't blocked by closing). */
+const NOT_OPEN_MESSAGE = 'Business day is not open. Request opening access from the Store Manager.';
+
+/**
+ * For stock movements: the active day's id. Stock work needs a business day
+ * (it isn't paused while the closing is in progress, only when no day is open).
+ */
 async function activeDayId(trx) {
   const day = await trx('business_days').whereIn('status', ACTIVE).first('id');
-  return day ? day.id : null;
+  if (!day) throw new AppError(NOT_OPEN_MESSAGE, 409);
+  return day.id;
 }
 
 function parseAmount(value, field) {
@@ -79,6 +97,12 @@ function parseAmount(value, field) {
   return n(v);
 }
 
+/** Serializes everything that opens a day or files an opening request. */
+async function lockOpening(trx) {
+  await trx.raw("SELECT pg_advisory_xact_lock(hashtext('business_days.open'))");
+}
+
+/** POST /open - store managers only (day.open). */
 async function openDay({ req, openingFloat }) {
   const float = parseAmount(openingFloat, 'opening_float');
   const settings = await getClosingSettings();
@@ -87,39 +111,55 @@ async function openDay({ req, openingFloat }) {
   return db.transaction(async (trx) => {
     // Serialize opens so the friendly checks below are race-free (the unique
     // indexes would catch a race anyway, but with a less helpful error).
-    await trx.raw("SELECT pg_advisory_xact_lock(hashtext('business_days.open'))");
-    const active = await activeDay(trx);
-    if (active) {
-      throw new AppError(`The business day ${dateOnly(active.business_date)} is still ${active.status === 'open' ? 'open' : 'being closed'} - close it first`, 409);
-    }
-    const existing = await trx('business_days').where({ business_date: businessDate }).first();
-    if (existing) {
-      throw new AppError(`The business day for ${businessDate} has already been opened and closed. A manager can reopen it if needed.`, 409);
-    }
-    const later = await trx('business_days').where('business_date', '>', businessDate).first();
-    if (later) throw new AppError('A later business day already exists - check the shop timezone setting', 409);
-
-    const previous = await trx('daily_closings')
-      .join('business_days', 'business_days.id', 'daily_closings.business_day_id')
-      .orderBy('business_days.business_date', 'desc')
-      .orderBy('daily_closings.version', 'desc')
-      .first('daily_closings.counted_cash', 'business_days.business_date');
-
-    const [day] = await trx('business_days')
-      .insert({ business_date: businessDate, status: 'open', opening_float: float, opened_by: req.user.id, opened_at: trx.fn.now() })
-      .returning('*');
-
-    await audit(req, {
-      action: 'day.open', entityType: 'business_day', entityId: day.id,
-      newValues: { business_date: businessDate, status: 'open', opening_float: float },
-      metadata: {
-        business_day_id: day.id,
-        // Reference only - cash removal/banking is out of scope, so no variance is computed.
-        previous_counted_cash: previous ? Number(previous.counted_cash) : null,
-      },
-    }, { trx, required: true });
+    await lockOpening(trx);
+    const day = await openDayInTrx(trx, { req, float, businessDate });
+    // Requests for this date are moot once a manager has opened it directly.
+    await trx('business_day_opening_requests').where({ business_date: businessDate, status: 'pending' }).update({
+      status: 'expired', reviewed_at: trx.fn.now(), manager_comment: `Business day opened directly by ${req.user.full_name}`,
+    });
     return day;
   });
+}
+
+/**
+ * Opens a new session for businessDate, as req.user (a manager - directly or
+ * by approving a request). Caller holds lockOpening() in trx.
+ */
+async function openDayInTrx(trx, { req, float, businessDate, openingRequestId = null }) {
+  const active = await activeDay(trx);
+  if (active) {
+    throw new AppError(`The business day ${dateOnly(active.business_date)} is still ${active.status === 'open' ? 'open' : 'being closed'} - close it first`, 409);
+  }
+  const existing = await trx('business_days').where({ business_date: businessDate }).max('session_no as n').first();
+  const sessionNo = Number(existing?.n || 0) + 1;
+  const later = await trx('business_days').where('business_date', '>', businessDate).first();
+  if (later) throw new AppError('A later business day already exists - check the shop timezone setting', 409);
+
+  const previous = await trx('daily_closings')
+    .join('business_days', 'business_days.id', 'daily_closings.business_day_id')
+    .orderBy('business_days.business_date', 'desc')
+    .orderBy('business_days.session_no', 'desc')
+    .orderBy('daily_closings.version', 'desc')
+    .first('daily_closings.counted_cash', 'business_days.business_date');
+
+  const [day] = await trx('business_days')
+    .insert({
+      business_date: businessDate, session_no: sessionNo, status: 'open', opening_float: float,
+      opened_by: req.user.id, opened_at: trx.fn.now(), opening_request_id: openingRequestId,
+    })
+    .returning('*');
+
+  await audit(req, {
+    action: 'day.open', entityType: 'business_day', entityId: day.id,
+    newValues: { business_date: businessDate, session_no: sessionNo, status: 'open', opening_float: float },
+    metadata: {
+      business_day_id: day.id,
+      // Reference only - cash removal/banking is out of scope, so no variance is computed.
+      previous_counted_cash: previous ? Number(previous.counted_cash) : null,
+      ...(openingRequestId && { opening_request_id: openingRequestId }),
+    },
+  }, { trx, required: true });
+  return day;
 }
 
 async function startClosing({ req }) {
@@ -163,7 +203,7 @@ async function submittableDay(trx) {
   const recount = await trx('business_days')
     .where({ status: 'closing_submitted' })
     .whereNotNull('recount_requested_at')
-    .orderBy('business_date', 'desc')
+    .modify(newestFirst)
     .forUpdate()
     .first();
   return recount || null;
@@ -238,13 +278,16 @@ async function submitClosing({ req, countedCash, explanation }) {
       snapshot: JSON.stringify(snapshot),
     }).returning('*');
 
-    const autoAccept = band !== 'critical';
+    // Critical variances wait for a manager - unless a manager submitted it:
+    // then it is accepted as theirs at once (still flagged, audited, notified).
+    const selfAccept = band === 'critical' && isManager(req);
+    const autoAccept = band !== 'critical' || selfAccept;
     const [updated] = await trx('business_days').where({ id: day.id }).update({
       status: autoAccept ? 'closed' : 'closing_submitted',
       submitted_by: req.user.id,
       submitted_at: trx.fn.now(),
-      acceptance: autoAccept ? 'auto' : null,
-      accepted_by: null,
+      acceptance: selfAccept ? 'manager' : autoAccept ? 'auto' : null,
+      accepted_by: selfAccept ? req.user.id : null,
       accepted_at: autoAccept ? trx.fn.now() : null,
       acceptance_note: null,
       closed_at: autoAccept ? trx.fn.now() : null,
@@ -263,12 +306,12 @@ async function submitClosing({ req, countedCash, explanation }) {
     }, { trx, required: true });
     if (autoAccept) {
       await audit(req, {
-        action: 'day.auto_accept', entityType: 'business_day', entityId: day.id,
-        newValues: { status: 'closed', variance, variance_band: band }, metadata: meta,
+        action: selfAccept ? 'day.accept' : 'day.auto_accept', entityType: 'business_day', entityId: day.id,
+        newValues: { status: 'closed', variance, variance_band: band, ...(selfAccept && { self_accepted: true }) }, metadata: meta,
       }, { trx, required: true });
     }
 
-    const date = dateOnly(day.business_date);
+    const date = dayLabel(day);
     const common = { entityType: 'business_day', entityId: day.id, actorUserId: req.user.id };
     await emit(trx, {
       ...common, type: 'CLOSING_SUBMITTED', dedupKey: `CLOSING_SUBMITTED:day:${day.id}:v${closing.version}`,
@@ -287,7 +330,7 @@ async function submitClosing({ req, countedCash, explanation }) {
         targetUserIds: [req.user.id], params: varianceParams,
       });
     }
-    if (autoAccept) {
+    if (autoAccept && !selfAccept) {
       await emit(trx, {
         ...common, type: 'CLOSING_ACCEPTED', dedupKey: `CLOSING_ACCEPTED:day:${day.id}:v${closing.version}`,
         targetUserIds: [req.user.id], params: { business_date: date, accepted_by_name: 'automatic acceptance', variance_rwf: signedRwf(variance) },
@@ -308,7 +351,6 @@ async function acceptClosing({ req, dayId, note }) {
     if (day.status !== 'closing_submitted') throw new AppError('Only a submitted closing awaiting review can be accepted', 409);
     if (day.recount_requested_at) throw new AppError('A recount has been requested - wait for the new count', 409);
     const closing = await currentClosing(trx, day.id);
-    if (closing.submitted_by === req.user.id) throw new AppError('You cannot accept a closing you submitted yourself', 403);
 
     const [updated] = await trx('business_days').where({ id: day.id }).update({
       status: 'closed', acceptance: 'manager', accepted_by: req.user.id, accepted_at: trx.fn.now(),
@@ -322,7 +364,7 @@ async function acceptClosing({ req, dayId, note }) {
     await emit(trx, {
       type: 'CLOSING_ACCEPTED', dedupKey: `CLOSING_ACCEPTED:day:${day.id}:v${closing.version}`,
       entityType: 'business_day', entityId: day.id, actorUserId: req.user.id, targetUserIds: [closing.submitted_by],
-      params: { business_date: dateOnly(day.business_date), accepted_by_name: req.user.full_name, variance_rwf: signedRwf(closing.variance) },
+      params: { business_date: dayLabel(day), accepted_by_name: req.user.full_name, variance_rwf: signedRwf(closing.variance) },
     });
     return updated;
   });
@@ -336,7 +378,6 @@ async function requestRecount({ req, dayId, reason }) {
     if (day.status !== 'closing_submitted') throw new AppError('Only a submitted closing awaiting review can be sent back for recount', 409);
     if (day.recount_requested_at) throw new AppError('A recount is already pending', 409);
     const closing = await currentClosing(trx, day.id);
-    if (closing.submitted_by === req.user.id) throw new AppError('You cannot review a closing you submitted yourself', 403);
 
     const [updated] = await trx('business_days').where({ id: day.id }).update({
       recount_requested_by: req.user.id, recount_requested_at: trx.fn.now(), recount_reason: why.slice(0, 1000), updated_at: trx.fn.now(),
@@ -348,7 +389,7 @@ async function requestRecount({ req, dayId, reason }) {
     await emit(trx, {
       type: 'RECOUNT_REQUESTED', dedupKey: `RECOUNT_REQUESTED:day:${day.id}:v${closing.version}`,
       entityType: 'business_day', entityId: day.id, actorUserId: req.user.id, targetUserIds: [closing.submitted_by],
-      params: { business_date: dateOnly(day.business_date), reviewer_name: req.user.full_name, reason: why },
+      params: { business_date: dayLabel(day), reviewer_name: req.user.full_name, reason: why },
     });
     return updated;
   });
@@ -367,8 +408,8 @@ async function reopenDay({ req, dayId, reason }) {
     if (!['closed', 'closed_with_adjustment'].includes(day.status)) throw new AppError('Only a closed business day can be reopened', 409);
     const active = await activeDay(trx);
     if (active) throw new AppError(`Close the current business day (${dateOnly(active.business_date)}) before reopening another`, 409);
-    const later = await trx('business_days').where('business_date', '>', dateOnly(day.business_date)).first();
-    if (later) throw new AppError('Only the most recent business day can be reopened - use a correction request instead', 409);
+    const newest = await trx('business_days').modify(newestFirst).first('id');
+    if (newest.id !== day.id) throw new AppError('Only the most recent business day can be reopened - use a correction request instead', 409);
 
     const [updated] = await trx('business_days').where({ id: day.id }).update({
       status: 'open', closing_started_by: null, closing_started_at: null, submitted_by: null, submitted_at: null,
@@ -383,13 +424,13 @@ async function reopenDay({ req, dayId, reason }) {
     await emit(trx, {
       type: 'BUSINESS_DAY_REOPENED', dedupKey: `BUSINESS_DAY_REOPENED:day:${day.id}:${updated.reopened_count}`,
       entityType: 'business_day', entityId: day.id, actorUserId: req.user.id,
-      params: { business_date: dateOnly(day.business_date), actor_name: req.user.full_name, reason: why },
+      params: { business_date: dayLabel(day), actor_name: req.user.full_name, reason: why },
     });
     return updated;
   });
 }
 
 module.exports = {
-  ACTIVE, requireOpenDay, activeDayId, activeDay, openDay, startClosing, cancelClosing, previewClosing, submitClosing,
-  acceptClosing, requestRecount, reopenDay, currentClosing, dateOnly, dayState, signedRwf,
+  ACTIVE, NOT_OPEN_MESSAGE, requireOpenDay, activeDayId, activeDay, openDay, openDayInTrx, lockOpening, parseAmount, startClosing, cancelClosing, previewClosing, submitClosing,
+  acceptClosing, requestRecount, reopenDay, currentClosing, dateOnly, dayLabel, newestFirst, dayState, signedRwf,
 };

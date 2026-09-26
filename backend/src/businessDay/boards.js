@@ -8,8 +8,9 @@
 const db = require('../config/db');
 const { buildFigures, atClockTime } = require('./figures');
 const { getClosingSettings, shopDate, shopTime, varianceBand } = require('./settings');
-const { ACTIVE, dateOnly, dayState } = require('./businessDayService');
+const { ACTIVE, dateOnly, dayState, newestFirst } = require('./businessDayService');
 const { correctedView } = require('./corrections');
+const openingRequests = require('./openingRequests');
 
 const SECURITY_TYPES = ['FAILED_LOGIN_BURST', 'ACCESS_DENIED_BURST', 'SUSPICIOUS_ACTIVITY'];
 
@@ -20,10 +21,15 @@ async function names(ids) {
   return new Map(rows.map((r) => [r.id, r.full_name]));
 }
 
-/** Instant (Date) of the expected closing time on a business date, in the shop timezone. */
+/**
+ * Instant (Date) of the expected closing time on a business date, in the shop
+ * timezone - or null for a session opened after that time (an extra session
+ * the manager opened late has no scheduled closing, so no due/overdue alerts).
+ */
 async function dueAt(day, settings) {
   const { rows } = await db.raw('SELECT ((?::date + ?::time) AT TIME ZONE ?) AS due', [dateOnly(day.business_date), settings.expected_closing_time, settings.timezone]);
-  return new Date(rows[0].due);
+  const due = new Date(rows[0].due);
+  return new Date(day.opened_at) >= due ? null : due;
 }
 
 /**
@@ -76,9 +82,13 @@ function stripManagementData(figures, canSeeHistory) {
 }
 
 async function peopleFor(day, closing) {
-  const map = await names([day.opened_by, day.closing_started_by, day.accepted_by, day.recount_requested_by]);
+  const request = day.opening_request_id
+    ? await db('business_day_opening_requests').where({ id: day.opening_request_id }).first('requested_by', 'requested_at')
+    : null;
+  const map = await names([day.opened_by, day.closing_started_by, day.accepted_by, day.recount_requested_by, request?.requested_by]);
   const person = (id, at) => (id ? { id, name: map.get(id) || null, at } : null);
   return {
+    opening_requested_by: request ? person(request.requested_by, request.requested_at) : null,
     opened_by: person(day.opened_by, day.opened_at),
     closing_requested_by: person(day.closing_started_by, day.closing_started_at),
     submitted_by: closing ? { id: closing.submitted_by, name: closing.submitted_by_name, at: closing.submitted_at } : null,
@@ -131,19 +141,19 @@ async function liveBoard(day, { canSeeHistory, settings }) {
   const figures = await buildFigures(db, day, settings);
   const due = await dueAt(day, settings);
   const now = Date.now();
-  const reminderAt = due.getTime() - settings.reminder_lead_minutes * 60000;
-  const criticalAt = due.getTime() + settings.critical_delay_minutes * 60000;
+  const reminderAt = due && due.getTime() - settings.reminder_lead_minutes * 60000;
+  const criticalAt = due && due.getTime() + settings.critical_delay_minutes * 60000;
   const pendingCorrections = await db('closing_correction_requests').where({ status: 'pending' }).count('* as n').first();
   return {
     kind: 'live',
     day: { ...dayState(day), business_date: dateOnly(day.business_date), opening_float: Number(day.opening_float) },
     figures: stripManagementData(figures, canSeeHistory),
     people: { ...(await peopleFor(day, null)), worked: figures.people.worked },
-    closing_schedule: {
+    closing_schedule: due ? {
       expected_closing_time: settings.expected_closing_time,
       due_at: due.toISOString(),
       state: now >= criticalAt ? 'overdue_critical' : now >= due.getTime() ? 'due' : now >= reminderAt ? 'reminder' : 'not_due',
-    },
+    } : null,
     alerts: {
       low_stock_count: figures.inventory.low_stock_count,
       out_of_stock_count: figures.inventory.out_of_stock_count,
@@ -161,11 +171,13 @@ async function dashboard(user) {
   const active = await db('business_days').whereIn('status', ACTIVE).first();
   const last = await db('business_days')
     .whereNotIn('status', ACTIVE)
-    .orderBy('business_date', 'desc')
+    .modify(newestFirst)
     .first();
   const awaitingReview = canSeeHistory
-    ? await db('business_days').where({ status: 'closing_submitted' }).orderBy('business_date').select('id', 'business_date', 'recount_requested_at')
+    ? await db('business_days').where({ status: 'closing_submitted' }).orderBy('business_date').orderBy('session_no').select('id', 'business_date', 'session_no', 'recount_requested_at')
     : [];
+  const shopToday = shopDate(settings);
+  const sessionsToday = await db('business_days').where({ business_date: shopToday }).count('* as n').first();
 
   const today = active ? await liveBoard(active, { canSeeHistory, settings }) : null;
   const lastBoard = last ? await closedBoard(last, { canSeeHistory, settings }) : null;
@@ -185,7 +197,9 @@ async function dashboard(user) {
   }
 
   return {
-    shop_date: shopDate(settings),
+    shop_date: shopToday,
+    sessions_today: Number(sessionsToday.n),
+    opening_requests: await openingRequests.forDashboard(user, shopToday),
     settings: {
       expected_closing_time: settings.expected_closing_time,
       timezone: settings.timezone,
@@ -211,12 +225,13 @@ async function history({ page = 1, limit = 30 }) {
       db.raw("(SELECT count(*)::int FROM closing_correction_requests r WHERE r.business_day_id = d.id AND r.status = 'pending') as pending_corrections"),
       db.raw('(SELECT count(*)::int FROM closing_adjustments a WHERE a.business_day_id = d.id) as adjustments'))
     .orderBy('d.business_date', 'desc')
+    .orderBy('d.session_no', 'desc')
     .limit(limit)
     .offset((page - 1) * limit);
   const [{ count }] = await db('business_days').count('* as count');
   return {
     items: rows.map((r) => ({
-      id: r.id, business_date: dateOnly(r.business_date), status: r.status, opened_by_name: r.opened_by_name, submitted_by_name: r.submitted_by_name,
+      id: r.id, business_date: dateOnly(r.business_date), session_no: r.session_no, status: r.status, opened_by_name: r.opened_by_name, submitted_by_name: r.submitted_by_name,
       opened_at: r.opened_at, closed_at: r.closed_at, variance: r.variance === null ? null : Number(r.variance), variance_band: r.variance_band,
       net_sales: r.net_sales === null ? null : Number(r.net_sales), pending_corrections: r.pending_corrections, adjustments: r.adjustments,
       reopened_count: r.reopened_count, acceptance: r.acceptance,
@@ -239,7 +254,7 @@ async function detail(dayId) {
 // Business-significant audit actions shown on the timeline (not every read).
 const TIMELINE_ACTIONS = [
   'day.open', 'day.closing_start', 'day.closing_cancel', 'day.closing_submit', 'day.auto_accept', 'day.accept', 'day.recount_request',
-  'day.reopen', 'day.left_open_critical', 'correction.request', 'correction.approve', 'correction.reject', 'adjustment.apply',
+  'day.reopen', 'day.left_open_critical', 'day.open_request_approve', 'correction.request', 'correction.approve', 'correction.reject', 'adjustment.apply',
   'sale.void', 'sale.refund', 'stock.intake', 'stock.transfer', 'stock.damage', 'product.price_change', 'product.deactivate',
   'supplier_delivery.create', 'institution_order.create', 'user.role_change', 'user.disable', 'user.password_reset',
 ];

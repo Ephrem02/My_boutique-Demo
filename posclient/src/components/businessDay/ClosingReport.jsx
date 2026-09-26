@@ -14,10 +14,17 @@ export const DAY_STATUS_TONE = {
 };
 const BAND_TONE = { normal: undefined, attention: 'warning', critical: 'danger' };
 
+/** "Sat 26 Sep 2026" - plus "· Session 2" when a date had more than one session. */
+export function dayTitle(t, day, options) {
+  const date = formatDate(day.business_date, options);
+  return day.session_no > 1 ? `${date} · ${t('businessDay.session', { n: day.session_no })}` : date;
+}
+
 /** Who opened / requested / submitted / accepted, and who worked - names only. */
 export function PeopleList({ people, closed }) {
   const { t } = useTranslation();
   const rows = [
+    people.opening_requested_by && [t('businessDay.people.openingRequestedBy'), people.opening_requested_by],
     people.opened_by && [t('businessDay.people.openedBy'), people.opened_by],
     people.closing_requested_by && [t('businessDay.people.closingRequestedBy'), people.closing_requested_by],
     closed && people.submitted_by && [t('businessDay.people.submittedBy'), people.submitted_by],
@@ -79,7 +86,7 @@ export default function ClosingReport({ board, title, actions, headingLevel = 2 
       <header className="closing-report-header">
         <div>
           <div className="eyebrow"><Lock aria-hidden="true" />{title}</div>
-          <Heading className="closing-report-date">{formatDate(day.business_date, { weekday: true })}</Heading>
+          <Heading className="closing-report-date">{dayTitle(t, day, { weekday: true })}</Heading>
           <div className="closing-report-sub">
             <StatusBadge tone={DAY_STATUS_TONE[day.status]}>{t(`businessDay.status.${day.status}`)}</StatusBadge>
             {day.closed_at && <span className="text-muted">{t('businessDay.closedAt', { time: formatTime(day.closed_at) })}</span>}
@@ -120,6 +127,8 @@ export default function ClosingReport({ board, title, actions, headingLevel = 2 
               { label: t('businessDay.fig.openingFloat'), value: formatRwf(figures.cash.opening_float) },
               { label: t('businessDay.fig.cashSales'), value: formatRwf(figures.cash.cash_sales) },
               { label: t('businessDay.fig.cashRefunds'), value: formatRwf(-figures.cash.cash_refunds) },
+              ...(figures.cash.account_cash_in ? [{ label: t('businessDay.fig.accountCashIn'), value: formatRwf(figures.cash.account_cash_in) }] : []),
+              ...(figures.cash.account_cash_out ? [{ label: t('businessDay.fig.accountCashOut'), value: formatRwf(-figures.cash.account_cash_out) }] : []),
               { label: t('businessDay.fig.expectedCash'), value: formatRwf(corrected ? corrected.expected_cash : figures.cash.expected_cash) },
               { label: t('businessDay.fig.countedCash'), value: formatRwf(corrected ? corrected.values.counted_cash.corrected : closing.counted_cash) },
               { label: t('businessDay.fig.variance'), value: formatRwf(variance, { signed: true }), strong: true, tone: BAND_TONE[closing.variance_band] },

@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, ShoppingCart, ReceiptText, Package, Boxes, Truck, Building2, Bell, BarChart3,
-  CalendarCheck2, FileCheck2, Settings2, MoreHorizontal,
+  CalendarCheck2, FileCheck2, Settings2, MoreHorizontal, Landmark,
 } from 'lucide-react';
 
 // Single source for navigation. `anyOf` hides links the user can't use -
@@ -24,6 +24,7 @@ export const NAV_GROUPS = [
   {
     id: 'management',
     items: [
+      { id: 'finance', to: '/finance', icon: Landmark, anyOf: ['reports.financial.view'] },
       { id: 'reports', to: '/reports', icon: BarChart3, anyOf: ['reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view'] },
       { id: 'businessDays', to: '/business-days', icon: CalendarCheck2, anyOf: ['day.history.view'] },
       { id: 'corrections', to: '/closing/corrections', icon: FileCheck2, anyOf: ['day.corrections.request', 'day.review'] },

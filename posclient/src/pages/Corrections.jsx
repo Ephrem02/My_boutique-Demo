@@ -9,7 +9,8 @@ import { PageHeader, StatusBadge, Tabs } from '../ui/display';
 import DataTable from '../ui/DataTable';
 import Button from '../ui/Button';
 import { useToast } from '../ui/Toast';
-import { formatRwf, formatDate, formatWhen } from '../ui/format';
+import { formatRwf, formatWhen } from '../ui/format';
+import { dayTitle } from '../components/businessDay/ClosingReport';
 
 const STATUS_TONE = { pending: 'warning', approved: 'success', rejected: 'danger' };
 
@@ -40,7 +41,7 @@ export default function Corrections() {
   }, [load, version]);
 
   const columns = [
-    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'subtitle', render: (r) => formatDate(r.business_date) },
+    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'subtitle', render: (r) => dayTitle(t, r) },
     { key: 'field', header: t('businessDay.correction.field'), mobile: 'title', render: (r) => t(`businessDay.fields.${r.field}`) },
     { key: 'change', header: t('businessDay.correction.change'), align: 'right', mobile: 'value', render: (r) => `${formatRwf(r.original_value)} → ${formatRwf(r.requested_value)}` },
     { key: 'reason', header: t('businessDay.correction.reason'), render: (r) => <span>{r.reason}{r.explanation && <span className="cell-note">{r.explanation}</span>}</span> },

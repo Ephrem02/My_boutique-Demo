@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { SIDES } = require('../finance/sides');
+const ledger = require('../finance/ledger');
 
 async function list(req, res) {
   const suppliers = await db('suppliers').select('*').orderBy('name');
@@ -10,9 +12,7 @@ async function getOne(req, res) {
   const supplier = await db('suppliers').where({ id }).first();
   if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-  const deliveries = await db('supplier_deliveries')
-    .where({ supplier_id: id })
-    .orderBy('delivery_date', 'desc');
+  const deliveries = await ledger.listInvoices({ s: SIDES.supplier, partyId: supplier.id });
 
   res.json({ ...supplier, deliveries });
 }

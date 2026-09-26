@@ -7,7 +7,7 @@ const db = require('../config/db');
 const { AppError } = require('../utils/AppError');
 const { audit } = require('../audit/auditService');
 const { emit, actorName } = require('../notifications/notificationService');
-const { dateOnly, currentClosing } = require('./businessDayService');
+const { dateOnly, dayLabel, currentClosing } = require('./businessDayService');
 const { formatRwf } = require('../utils/sanitize');
 
 // Closing figures a correction may target, and where each lives.
@@ -16,6 +16,9 @@ const FIELDS = {
   opening_float: { label: 'opening float', read: (c) => c.opening_float },
   cash_sales: { label: 'cash sales', read: (c) => c.cash_sales },
   cash_refunds: { label: 'cash refunds', read: (c) => c.cash_refunds },
+  // Older closings predate account cash in the till: treat as zero
+  account_cash_in: { label: 'account cash received', read: (c) => c.snapshot.cash?.account_cash_in || 0 },
+  account_cash_out: { label: 'account cash paid out', read: (c) => c.snapshot.cash?.account_cash_out || 0 },
   mtn_mobile_money: { label: 'MTN Mobile Money total', read: (c) => c.snapshot.payment_methods.mtn_mobile_money },
   airtel_money: { label: 'Airtel Money total', read: (c) => c.snapshot.payment_methods.airtel_money },
   card: { label: 'card total', read: (c) => c.snapshot.payment_methods.card },
@@ -31,7 +34,8 @@ function correctedView(closing, adjustments) {
     const delta = n(adjustments.filter((a) => a.field === field).reduce((s, a) => s + Number(a.delta), 0));
     values[field] = { original, delta, corrected: n(original + delta) };
   }
-  const expected = n(values.opening_float.corrected + values.cash_sales.corrected - values.cash_refunds.corrected);
+  const expected = n(values.opening_float.corrected + values.cash_sales.corrected - values.cash_refunds.corrected
+    + values.account_cash_in.corrected - values.account_cash_out.corrected);
   const variance = n(values.counted_cash.corrected - expected);
   return { values, expected_cash: expected, variance, adjusted: adjustments.length > 0 };
 }
@@ -83,7 +87,7 @@ async function requestCorrection({ req, dayId, field, requestedValue, reason, ex
       type: 'CORRECTION_REQUESTED', dedupKey: `CORRECTION_REQUESTED:${request.id}`,
       entityType: 'business_day', entityId: day.id, actorUserId: req.user.id,
       params: {
-        business_date: dateOnly(day.business_date), actor_name: await actorName(trx, req.user.id), field: FIELDS[field].label,
+        business_date: dayLabel(day), actor_name: await actorName(trx, req.user.id), field: FIELDS[field].label,
         original_value: formatRwf(current), requested_value: formatRwf(requested), reason: why,
       },
     });
@@ -146,7 +150,7 @@ async function decideCorrection({ req, requestId, decision, reason }) {
       type: 'CORRECTION_DECIDED', dedupKey: `CORRECTION_DECIDED:${request.id}`,
       entityType: 'business_day', entityId: day.id, actorUserId: req.user.id, targetUserIds: [request.requested_by],
       params: {
-        business_date: dateOnly(day.business_date), field: FIELDS[request.field].label, decision: status,
+        business_date: dayLabel(day), field: FIELDS[request.field].label, decision: status,
         reviewer_name: req.user.full_name, reason: why || '',
       },
     });
@@ -159,7 +163,7 @@ async function listCorrections({ user, status, canReview }) {
     .join('business_days as d', 'd.id', 'c.business_day_id')
     .join('users as r', 'r.id', 'c.requested_by')
     .leftJoin('users as v', 'v.id', 'c.reviewed_by')
-    .select('c.*', 'd.business_date', 'r.full_name as requested_by_name', 'v.full_name as reviewed_by_name')
+    .select('c.*', 'd.business_date', 'd.session_no', 'r.full_name as requested_by_name', 'v.full_name as reviewed_by_name')
     .orderBy('c.id', 'desc')
     .limit(200);
   if (!canReview) query.where('c.requested_by', user.id); // requesters only see their own

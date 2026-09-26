@@ -58,10 +58,27 @@ async function buildFigures(trx, day, settings) {
     refundCount += Number(r.count);
   }
 
+  // Cash moved through the till for supplier/customer accounts this day. A
+  // cash transaction reversed on the same day never happened for the till.
+  const accountCash = async (table) => {
+    const rows = await trx(`${table} as t`)
+      .where({ 't.business_day_id': dayId, 't.method': 'cash' })
+      .whereIn('t.type', ['payment', 'refund'])
+      .whereNotExists(trx(`${table} as r`).whereRaw('r.reverses_id = t.id').where('r.business_day_id', dayId).select(trx.raw('1')))
+      .groupBy('t.type')
+      .select('t.type')
+      .sum({ total: 't.amount' });
+    return Object.fromEntries(rows.map((r) => [r.type, n(r.total)]));
+  };
+  const customerCash = await accountCash('customer_transactions');
+  const supplierCash = await accountCash('supplier_transactions');
+  const accountCashIn = n((customerCash.payment || 0) + (supplierCash.refund || 0));
+  const accountCashOut = n((supplierCash.payment || 0) + (customerCash.refund || 0));
+
   const openingFloat = n(day.opening_float);
   const cashSales = n(byMethod.cash);
   const cashRefunds = n(refundsByMethod.cash);
-  const expectedCash = n(openingFloat + cashSales - cashRefunds);
+  const expectedCash = n(openingFloat + cashSales - cashRefunds + accountCashIn - accountCashOut);
 
   // Per-cashier (management only)
   const perCashierSales = await trx('sales')
@@ -164,7 +181,14 @@ async function buildFigures(trx, day, settings) {
     },
     payment_methods: byMethod,
     refunds_by_method: refundsByMethod,
-    cash: { opening_float: openingFloat, cash_sales: cashSales, cash_refunds: cashRefunds, expected_cash: expectedCash },
+    cash: {
+      opening_float: openingFloat,
+      cash_sales: cashSales,
+      cash_refunds: cashRefunds,
+      account_cash_in: accountCashIn, // customer account payments + supplier refunds, in cash
+      account_cash_out: accountCashOut, // supplier payments + customer refunds, in cash
+      expected_cash: expectedCash,
+    },
     inventory: {
       movements: movementsByType,
       low_stock_count: lowStock.length,

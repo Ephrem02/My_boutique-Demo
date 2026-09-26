@@ -29,6 +29,8 @@ export default function ReceiptModal({ type, id, onClose }) {
     </>
   );
 
+  const payments = (record?.transactions || []).filter((p) => p.type === 'payment' && !p.reversed_by && p.invoice_id === record.id);
+
   return (
     <Dialog title={isSupplier ? t('receipts.deliveryReceipt') : t('receipts.orderReceipt')} hideTitle onClose={onClose} footer={footer}>
       {error && <ErrorState error={error} />}
@@ -73,12 +75,17 @@ export default function ReceiptModal({ type, id, onClose }) {
           </table>
 
           <dl className="receipt-totals">
+            {Number(record.discount_amount) > 0 && <div><dt>{t('finance.discount')}</dt><dd className="num">{formatRwf(-record.discount_amount)}</dd></div>}
             <div><dt>{t('common.total')}</dt><dd className="num">{formatRwf(record.total_amount)}</dd></div>
+            {record.returns_total > 0 && <div><dt>{t('finance.returns')}</dt><dd className="num">{formatRwf(-record.returns_total)}</dd></div>}
             <div><dt>{t('receipts.amountPaid')}</dt><dd className="num">{formatRwf(record.amount_paid)}</dd></div>
-            <div className="receipt-total-final"><dt>{t('receipts.balanceDue')}</dt><dd className="num">{formatRwf(Number(record.total_amount) - Number(record.amount_paid))}</dd></div>
+            <div className="receipt-total-final">
+              <dt>{record.balance < 0 ? t('finance.creditBalance') : t('receipts.balanceDue')}</dt>
+              <dd className="num">{formatRwf(Math.abs(record.balance))}</dd>
+            </div>
           </dl>
 
-          {record.payments.length > 0 && (
+          {payments.length > 0 && (
             <>
               <div className="receipt-section">{t('receipts.paymentsReceived')}</div>
               <table className="receipt-table">
@@ -90,9 +97,9 @@ export default function ReceiptModal({ type, id, onClose }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {record.payments.map((p) => (
+                  {payments.map((p) => (
                     <tr key={p.id}>
-                      <td>{formatDate(p.paid_date)}</td>
+                      <td>{formatDate(p.txn_date)}</td>
                       <td>{t(`paymentMethods.${p.method}`, { defaultValue: p.method?.replace('_', ' ') || '—' })}</td>
                       <td className="align-right num">{formatRwf(p.amount)}</td>
                     </tr>

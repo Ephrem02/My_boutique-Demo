@@ -6,6 +6,8 @@ import { Alert } from '../../ui/display';
 import Button from '../../ui/Button';
 import { useToast } from '../../ui/Toast';
 import { OpenDayDialog } from './Dialogs';
+import { RequestOpeningDialog } from './OpeningRequests';
+import { formatTime } from '../../ui/format';
 
 /**
  * Till banner: explains why selling is blocked (no open day / closing in
@@ -17,17 +19,24 @@ export default function DayStatusBanner() {
   const toast = useToast();
   const { hasPermission } = useAuth();
   const { data, status, refresh } = useBusinessDay();
-  const [opening, setOpening] = useState(false);
+  const [opening, setOpening] = useState(null); // 'open' | 'request'
   if (!data) return null;
   const schedule = data.today?.closing_schedule;
   const last = data.last;
+  // Only store managers open the day; cashiers and store keepers request it.
+  const canOpen = hasPermission('day.open');
+  const canRequest = !canOpen && hasPermission('day.open.request');
+  const myRequest = data.opening_requests?.mine;
+  const pending = myRequest?.status === 'pending';
 
   let banner = null;
   if (status === 'none') {
     banner = (
       <Alert tone="danger" title={t('businessDay.till.noDay')}
-        action={hasPermission('day.open') ? <Button size="sm" variant="primary" onClick={() => setOpening(true)}>{t('businessDay.open.button')}</Button> : null}>
-        {!hasPermission('day.open') && t('businessDay.till.askOpen')}
+        action={canOpen ? <Button size="sm" variant="primary" onClick={() => setOpening('open')}>{t('businessDay.open.button')}</Button>
+          : canRequest && !pending ? <Button size="sm" variant="primary" onClick={() => setOpening('request')}>{t('businessDay.request.button')}</Button> : null}>
+        {!canOpen && (pending ? t('businessDay.request.pendingText', { time: formatTime(myRequest.requested_at) })
+          : canRequest ? t('businessDay.request.notOpen') : t('businessDay.till.askOpen'))}
       </Alert>
     );
   } else if (status === 'closing_in_progress') {
@@ -43,11 +52,18 @@ export default function DayStatusBanner() {
   return (
     <div className="till-banner">
       {banner}
-      {opening && (
+      {opening === 'open' && (
         <OpenDayDialog
           previousCounted={last ? (last.corrected ? last.corrected.values.counted_cash.corrected : last.closing.counted_cash) : null}
-          onClose={() => setOpening(false)}
-          onDone={() => { setOpening(false); refresh(); toast.success(t('dashboard.toast.opened')); }}
+          onClose={() => setOpening(null)}
+          onDone={() => { setOpening(null); refresh(); toast.success(t('dashboard.toast.opened')); }}
+        />
+      )}
+      {opening === 'request' && (
+        <RequestOpeningDialog
+          businessDate={data.shop_date}
+          onClose={() => setOpening(null)}
+          onDone={() => { setOpening(null); refresh(); toast.success(t('businessDay.request.sent')); }}
         />
       )}
     </div>

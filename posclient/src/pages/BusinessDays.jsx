@@ -3,7 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, CalendarCheck2, History } from 'lucide-react';
 import client from '../api/client';
-import ClosingReport, { DAY_STATUS_TONE, HealthBadge, PeopleList } from '../components/businessDay/ClosingReport';
+import { useAuth } from '../context/AuthContext';
+import { useBusinessDay } from '../context/BusinessDayContext';
+import { ReasonDialog } from '../components/businessDay/Dialogs';
+import { useToast } from '../ui/Toast';
+import ClosingReport, { DAY_STATUS_TONE, HealthBadge, PeopleList, dayTitle } from '../components/businessDay/ClosingReport';
 import { PageHeader, Panel, StatusBadge, ErrorState, SkeletonPanel, EmptyState, Metric } from '../ui/display';
 import DataTable from '../ui/DataTable';
 import Button from '../ui/Button';
@@ -33,7 +37,7 @@ export function BusinessDayHistory() {
   }, [load]);
 
   const columns = [
-    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'title', render: (d) => formatDate(d.business_date, { weekday: true }) },
+    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'title', render: (d) => dayTitle(t, d, { weekday: true }) },
     {
       key: 'status', header: t('common.status'), sortable: true, mobile: 'meta',
       render: (d) => (
@@ -67,7 +71,7 @@ export function BusinessDayHistory() {
       <PageHeader title={t('businessDay.history')} subtitle={t('businessDay.historySubtitle')} />
       <DataTable caption={t('businessDay.history')} columns={columns} rows={data?.items} loading={!data} error={error} onRetry={load}
         initialSort={{ key: 'business_date', dir: 'desc' }} onRowClick={(d) => navigate(`/business-days/${d.id}`)}
-        rowLabel={(d) => t('businessDay.openDay', { date: formatDate(d.business_date) })}
+        rowLabel={(d) => t('businessDay.openDay', { date: dayTitle(t, d) })}
         empty={{ icon: CalendarCheck2, title: t('businessDay.noClosingYet'), description: t('dashboard.noClosingHint') }} />
     </div>
   );
@@ -86,6 +90,10 @@ export function BusinessDayDetail() {
   const [board, setBoard] = useState(null);
   const [timeline, setTimeline] = useState(null);
   const [error, setError] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const { hasPermission } = useAuth();
+  const { refresh: refreshDay } = useBusinessDay();
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -102,10 +110,25 @@ export function BusinessDayDetail() {
     load();
   }, [load]);
 
+  // Any closing still awaiting review can be decided here, not just the newest one on the dashboard.
+  const reviewable = board && hasPermission('day.review') && board.day.status === 'closing_submitted' && !board.day.recount_requested_at;
+  const reviewActions = reviewable && (
+    <>
+      <Button variant="primary" onClick={() => setDialog('accept')}>{t('businessDay.review.accept')}</Button>
+      <Button onClick={() => setDialog('recount')}>{t('businessDay.review.recount')}</Button>
+    </>
+  );
+  const decided = (message) => {
+    setDialog(null);
+    load();
+    refreshDay();
+    toast.success(message);
+  };
+
   return (
     <div className="page">
       <PageHeader
-        title={board ? formatDate(board.day.business_date, { weekday: true }) : t('businessDay.history')}
+        title={board ? dayTitle(t, board.day, { weekday: true }) : t('businessDay.history')}
         subtitle={board ? t(`businessDay.status.${board.day.status}`) : undefined}
         actions={<Button icon={ArrowLeft} to="/business-days">{t('businessDay.history')}</Button>}
       />
@@ -124,7 +147,7 @@ export function BusinessDayDetail() {
                 <PeopleList people={board.people} closed={false} />
               </Panel>
             ) : (
-              <ClosingReport board={board} title={t('businessDay.closingReport')} headingLevel={2} />
+              <ClosingReport board={board} title={t('businessDay.closingReport')} headingLevel={2} actions={reviewActions} />
             )}
             {board.versions?.length > 1 && (
               <Panel title={t('businessDay.versions')} subtitle={t('businessDay.versionsHint')}>
@@ -163,6 +186,16 @@ export function BusinessDayDetail() {
             </Panel>
           </aside>
         </div>
+      )}
+      {dialog === 'accept' && (
+        <ReasonDialog title={t('businessDay.review.acceptTitle')} description={t('businessDay.review.acceptHint')} label={t('businessDay.review.note')}
+          required={false} confirmLabel={t('businessDay.review.accept')} onClose={() => setDialog(null)}
+          onSubmit={async (note) => { await client.post(`/business-days/${board.day.id}/accept`, { note }); decided(t('dashboard.toast.accepted')); }} />
+      )}
+      {dialog === 'recount' && (
+        <ReasonDialog title={t('businessDay.review.recountTitle')} label={t('businessDay.review.reason')} minLength={3}
+          confirmLabel={t('businessDay.review.recount')} onClose={() => setDialog(null)}
+          onSubmit={async (reason) => { await client.post(`/business-days/${board.day.id}/recount`, { reason }); decided(t('dashboard.toast.recount')); }} />
       )}
     </div>
   );

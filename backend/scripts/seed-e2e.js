@@ -54,18 +54,39 @@ async function main() {
   await a.post('/api/business-days/current/closing/start');
   await a.post('/api/business-days/current/closing/submit').send({ counted_cash: 44000, explanation: 'Gave change twice to one customer' });
 
-  await b.post('/api/business-days/open').send({ opening_float: 20000 });
+  // Today opens the controlled way: the cashier asks, the manager approves.
+  const request = await b.post('/api/business-days/opening-requests').send({ opening_float: 20000, reason: 'Start of daily operations' });
+  await m.post(`/api/business-days/opening-requests/${request.body.id}/approve`).send({});
   await sell(b, products[0], 2, 'cash');
   await sell(a, products[3], 3, 'airtel_money');
   await sell(a, products[1], 2, 'mtn_mobile_money');
   await sell(b, products[4], 2, 'card');
 
-  await k.post('/api/supplier-deliveries').send({
-    supplier_id: supplier.id, delivery_date: new Date().toISOString().slice(0, 10), payment_due_date: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
-    items: [{ product_id: products[2].id, quantity: 20, unit_cost: 1400 }],
+  // Supplier ledger: goods on credit, an instalment, and a return
+  const isoDay = (offset = 0) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+  const { body: delivery } = await k.post('/api/supplier-deliveries').send({
+    supplier_id: supplier.id, delivery_date: isoDay(), payment_due_date: isoDay(2), reference_no: 'KW-2026-118',
+    items: [{ product_id: products[2].id, quantity: 20, unit_cost: 1400, batch_no: 'B-0426', expiry_date: isoDay(365) }],
   });
-  await k.post('/api/institution-orders').send({
-    institution_id: institution.id, order_date: new Date().toISOString().slice(0, 10), items: [{ product_id: products[3].id, quantity: 5, unit_price: 750 }],
+  await m.post(`/api/finance/supplier/invoices/${delivery.id}/payments`).send({ amount: 10000, method: 'mtn_mobile_money', reference_no: 'MP240118' });
+  const { body: deliveryDetail } = await k.get(`/api/supplier-deliveries/${delivery.id}`);
+  await k.post(`/api/finance/supplier/invoices/${delivery.id}/returns`).send({
+    items: [{ item_id: deliveryDetail.items[0].id, quantity: 2 }], reason: 'damaged', notes: 'Crushed in transport',
+  });
+
+  // Customer ledger: an overdue part-paid invoice, and a large return waiting for a manager
+  await a.post('/api/institution-orders').send({
+    institution_id: institution.id, order_date: isoDay(), due_date: isoDay(-1),
+    items: [{ product_id: products[3].id, quantity: 5, unit_price: 750 }], payment: { amount: 1500, method: 'mtn_mobile_money', reference_no: 'MTN-5521' },
+  });
+  const soap = products.find((p) => p.sku === 'SOAP-1');
+  const { body: bulk } = await a.post('/api/institution-orders').send({
+    institution_id: institution.id, order_date: isoDay(), due_date: isoDay(14), discount_amount: 5000,
+    items: [{ product_id: soap.id, quantity: 3, unit_price: 50000 }], payment: { amount: 145000, method: 'bank_transfer', reference_no: 'BK-7781' },
+  });
+  const { body: bulkDetail } = await a.get(`/api/institution-orders/${bulk.id}`);
+  await a.post(`/api/finance/customer/invoices/${bulk.id}/returns`).send({
+    items: [{ item_id: bulkDetail.items[0].id, quantity: 3, restock: true }], reason: 'changed_mind',
   });
   await m.post('/api/admin/notifications/manual').send({ title: 'Stock count on Friday', message: 'Please stay 30 minutes after closing.', recipient_roles: ['cashier', 'store_keeper'] });
 

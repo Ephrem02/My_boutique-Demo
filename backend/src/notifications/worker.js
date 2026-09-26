@@ -140,16 +140,16 @@ async function processDeliveries() {
 async function checkSupplierPayments() {
   const dueRule = await getRule(db, 'SUPPLIER_PAYMENT_DUE');
   const daysBefore = Number(dueRule.thresholds.days_before) || 0;
-  const open = await db('supplier_deliveries')
-    .join('suppliers', 'suppliers.id', 'supplier_deliveries.supplier_id')
-    .whereIn('supplier_deliveries.status', ['unpaid', 'partial'])
-    .whereNotNull('supplier_deliveries.payment_due_date')
-    .where('supplier_deliveries.payment_due_date', '<=', db.raw(`current_date + (? * interval '1 day')`, [daysBefore]))
+  // Balances come from the ledger view (payments, returns, credits, reversals)
+  const open = await db('supplier_invoice_balances as b')
+    .join('suppliers', 'suppliers.id', 'b.party_id')
+    .where('b.balance', '>', 0)
+    .whereNotNull('b.due_date')
+    .where('b.due_date', '<=', db.raw(`current_date + (? * interval '1 day')`, [daysBefore]))
     .select(
-      'supplier_deliveries.id', 'suppliers.name as supplier_name',
-      db.raw("to_char(supplier_deliveries.payment_due_date, 'YYYY-MM-DD') as due_date"),
-      db.raw('(supplier_deliveries.payment_due_date < current_date) as overdue'),
-      db.raw('(supplier_deliveries.total_amount - supplier_deliveries.amount_paid) as balance')
+      'b.invoice_id as id', 'suppliers.name as supplier_name',
+      db.raw("to_char(b.due_date, 'YYYY-MM-DD') as due_date"),
+      'b.overdue', 'b.balance'
     );
 
   for (const d of open) {
@@ -176,17 +176,19 @@ async function checkBusinessDay(now = new Date()) {
   // Required lazily: the business-day modules depend on the notification service.
   const { getClosingSettings } = require('../businessDay/settings');
   const { dueAt } = require('../businessDay/boards');
-  const { ACTIVE, dateOnly } = require('../businessDay/businessDayService');
+  const { ACTIVE, dayLabel } = require('../businessDay/businessDayService');
   const settings = await getClosingSettings();
   const day = await db('business_days').whereIn('status', ACTIVE).first();
   if (!day) return null;
 
-  const due = (await dueAt(day, settings)).getTime();
+  const dueDate = await dueAt(day, settings);
+  if (!dueDate) return []; // extra session opened after closing time: no schedule
+  const due = dueDate.getTime();
   const reminderAt = due - settings.reminder_lead_minutes * 60000;
   const criticalAt = due + settings.critical_delay_minutes * 60000;
   const t = now.getTime();
   const key = (type) => `${type}:day:${day.id}:r${day.reopened_count}`;
-  const params = { business_date: dateOnly(day.business_date), closing_time: settings.expected_closing_time };
+  const params = { business_date: dayLabel(day), closing_time: settings.expected_closing_time };
   const base = { entityType: 'business_day', entityId: day.id };
   const fired = [];
 
@@ -209,6 +211,24 @@ async function checkBusinessDay(now = new Date()) {
     }
   }
   return fired;
+}
+
+/** CUSTOMER_PAYMENT_OVERDUE, once per invoice, for customer invoices past their due date. */
+async function checkCustomerPayments() {
+  const overdue = await db('customer_invoice_balances as b')
+    .join('institutions', 'institutions.id', 'b.party_id')
+    .where('b.overdue', true)
+    .select('b.invoice_id as id', 'institutions.name as customer_name', 'b.balance', db.raw("to_char(b.due_date, 'YYYY-MM-DD') as due_date"));
+  for (const o of overdue) {
+    await emit(db, {
+      type: 'CUSTOMER_PAYMENT_OVERDUE',
+      dedupKey: `CUSTOMER_PAYMENT_OVERDUE:order:${o.id}`,
+      entityType: 'institution_order',
+      entityId: o.id,
+      params: { customer_name: o.customer_name, order_id: o.id, balance_rwf: formatRwf(o.balance), due_date: o.due_date },
+    });
+  }
+  return overdue.length;
 }
 
 /**
@@ -234,7 +254,7 @@ async function runPass({ includeScheduled = false } = {}) {
     let checked = null;
     const due = !state.lastScheduledAt || Date.now() - state.lastScheduledAt >= SCHEDULE_MS;
     if (includeScheduled || due) {
-      checked = await checkSupplierPayments();
+      checked = (await checkSupplierPayments()) + (await checkCustomerPayments());
       state.lastScheduledAt = Date.now();
     }
     state.lastRunAt = Date.now();
@@ -269,4 +289,4 @@ function status() {
   };
 }
 
-module.exports = { runOnce, start, stop, status, checkSupplierPayments, checkBusinessDay, BACKOFF_MINUTES };
+module.exports = { runOnce, start, stop, status, checkSupplierPayments, checkCustomerPayments, checkBusinessDay, BACKOFF_MINUTES };

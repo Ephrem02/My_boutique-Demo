@@ -1,55 +1,39 @@
-const db = require('../config/db');
 const { handleServiceError } = require('../utils/handleServiceError');
-const { createDelivery, recordPayment, getUnpaidSummary } = require('../models/supplierService');
+const { can } = require('../middleware/rbac');
+const { createDelivery } = require('../models/supplierService');
+const { SIDES } = require('../finance/sides');
+const ledger = require('../finance/ledger');
 
-// GET /api/supplier-deliveries?supplier_id=&status=
+const s = SIDES.supplier;
+
+// GET /api/supplier-deliveries?supplier_id=&status=&overdue=1
 async function list(req, res) {
-  const { supplier_id, status } = req.query;
-  const query = db('supplier_deliveries')
-    .select('supplier_deliveries.*', 'suppliers.name as supplier_name')
-    .join('suppliers', 'suppliers.id', 'supplier_deliveries.supplier_id')
-    .orderBy('supplier_deliveries.delivery_date', 'desc');
-
-  if (supplier_id) query.where('supplier_deliveries.supplier_id', supplier_id);
-  if (status) query.where('supplier_deliveries.status', status);
-
-  res.json(await query);
+  const { supplier_id, status, overdue } = req.query;
+  res.json(await ledger.listInvoices({ s, partyId: supplier_id, status, overdue: overdue === '1' || overdue === 'true' }));
 }
 
-// GET /api/supplier-deliveries/:id
+// GET /api/supplier-deliveries/:id - lines, balance breakdown, transactions and returns
 async function getOne(req, res) {
-  const { id } = req.params;
-  const delivery = await db('supplier_deliveries')
-    .select('supplier_deliveries.*', 'suppliers.name as supplier_name')
-    .join('suppliers', 'suppliers.id', 'supplier_deliveries.supplier_id')
-    .where('supplier_deliveries.id', id)
-    .first();
-  if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-
-  const items = await db('supplier_delivery_items')
-    .select('supplier_delivery_items.*', 'products.name as product_name', 'products.sku')
-    .join('products', 'products.id', 'supplier_delivery_items.product_id')
-    .where('delivery_id', id);
-
-  const payments = await db('supplier_payments').where({ delivery_id: id }).orderBy('paid_date');
-
-  res.json({ ...delivery, items, payments });
+  const detail = await ledger.invoiceDetail({ s, invoiceId: req.params.id });
+  if (!detail) return res.status(404).json({ error: 'Delivery not found' });
+  res.json(detail);
 }
 
 // POST /api/supplier-deliveries
-// { supplier_id, delivery_date, payment_due_date, items: [{ product_id, quantity, unit_cost }] }
+// { supplier_id, delivery_date, payment_due_date, reference_no, notes,
+//   items: [{ product_id, quantity, unit_cost, batch_no, expiry_date }],
+//   payment: { amount, method, reference_no } }   <- optional, paid on receipt
 async function create(req, res) {
-  const { supplier_id, delivery_date, payment_due_date, items } = req.body;
+  const { supplier_id, delivery_date, payment_due_date, reference_no, notes, items, payment } = req.body;
   if (!supplier_id || !delivery_date || !items || !items.length) {
     return res.status(400).json({ error: 'supplier_id, delivery_date and at least one item are required' });
   }
+  if (payment && Number(payment.amount) > 0 && !can(req, 'supplier_payments.manage')) {
+    return res.status(403).json({ error: 'Only a store manager can record supplier payments', required: ['supplier_payments.manage'] });
+  }
   try {
     const delivery = await createDelivery({
-      supplierId: supplier_id,
-      deliveryDate: delivery_date,
-      paymentDueDate: payment_due_date,
-      items,
-      recordedBy: req.user.id,
+      req, supplierId: supplier_id, deliveryDate: delivery_date, paymentDueDate: payment_due_date, referenceNo: reference_no, notes, items, payment,
     });
     res.status(201).json(delivery);
   } catch (err) {
@@ -57,31 +41,9 @@ async function create(req, res) {
   }
 }
 
-// POST /api/supplier-deliveries/:id/payments
-// { amount, paid_date, method }
-async function pay(req, res) {
-  const { id } = req.params;
-  const { amount, paid_date, method } = req.body;
-  if (!amount || !paid_date) {
-    return res.status(400).json({ error: 'amount and paid_date are required' });
-  }
-  try {
-    const result = await recordPayment({
-      deliveryId: id,
-      amount,
-      paidDate: paid_date,
-      method,
-      recordedBy: req.user.id,
-    });
-    res.status(201).json(result);
-  } catch (err) {
-    handleServiceError(err, res);
-  }
-}
-
-// GET /api/supplier-deliveries/unpaid-summary
+// GET /api/supplier-deliveries/unpaid-summary - suppliers we owe (or who owe us credit)
 async function unpaidSummary(req, res) {
-  res.json(await getUnpaidSummary());
+  res.json((await ledger.balancesByParty({ s })).map((r) => ({ ...r, supplier_id: r.party_id, supplier_name: r.party_name })));
 }
 
-module.exports = { list, getOne, create, pay, unpaidSummary };
+module.exports = { list, getOne, create, unpaidSummary };

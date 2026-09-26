@@ -526,6 +526,11 @@ a.attention-item:hover .attention-text {
   font-size: var(--text-sm);
 }
 
+/* Business day opening request awaiting a manager (dashboard) */
+.opening-request {
+  border-left: 3px solid var(--color-warning-solid);
+}
+
 .closing-report {
   background: linear-gradient(var(--color-surface-sunken), var(--color-surface) 120px);
 }
@@ -1279,6 +1284,74 @@ a.attention-item:hover .attention-text {
 
 .line-editor-remove {
   margin-bottom: var(--space-4);
+}
+
+/* Batch / expiry under a delivery line: its own row, full width */
+.line-editor-meta {
+  grid-column: 1 / -1;
+}
+
+/* ---------------- Supplier & customer ledger ---------------- */
+
+.ledger-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+}
+
+.invoice-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-2) var(--space-6);
+  margin: var(--space-3) 0;
+}
+
+/* A reversed transaction stays visible but reads as cancelled */
+.txn-reversed .num,
+.txn-reversed td:first-child {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.return-lines {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+}
+
+.return-line {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) auto;
+  gap: 0 var(--space-3);
+  align-items: end;
+  padding: var(--space-2) 0;
+}
+
+.return-line + .return-line {
+  border-top: 1px dashed var(--color-border);
+}
+
+.return-line-product {
+  align-self: center;
+  min-width: 0;
+}
+
+@media (max-width: 639px) {
+  .return-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .return-line-product {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Finance overview: panels side by side on wide screens */
+.finance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: var(--space-4);
 }
 
 /* ---------------- Reports ---------------- */

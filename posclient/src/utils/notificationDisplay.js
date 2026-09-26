@@ -21,6 +21,7 @@ const LINKS = {
   institution_order: { path: '/institutions', permission: 'institutions.view' },
   user: { path: '/employees', permission: 'employees.manage' },
   notification_delivery: { path: '/admin/deliveries', permission: 'notifications.deliveries.manage' },
+  opening_request: { path: '/', permission: 'day.view' }, // approve/reject or see the status on the dashboard
 };
 
 export function linkFor(notification, hasPermission) {

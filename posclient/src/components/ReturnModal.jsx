@@ -1,80 +1,64 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import client from '../api/client';
+import Dialog from '../ui/Dialog';
+import Button from '../ui/Button';
+import { Checkbox, Field, Input } from '../ui/Field';
+import { ErrorState } from '../ui/display';
+import { formatRwf } from '../ui/format';
 
 export default function ReturnModal({ saleItem, onClose, onRecorded }) {
   const { t } = useTranslation();
-  const [quantity, setQuantity] = useState(saleItem.quantity - (saleItem.returned_quantity || 0));
+  const remaining = saleItem.quantity - (saleItem.returned_quantity || 0);
+  const [quantity, setQuantity] = useState(remaining);
   const [reason, setReason] = useState('');
   const [restocked, setRestocked] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+  const [fieldError, setFieldError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError('');
+  async function submit() {
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty < 1 || qty > remaining) {
+      setFieldError(t('returnModal.quantityRange', { max: remaining }));
+      return;
+    }
+    setFieldError('');
+    setError(null);
     setLoading(true);
     try {
-      await client.post('/returns', {
-        sale_item_id: saleItem.id,
-        quantity: Number(quantity),
-        reason: reason || undefined,
-        restocked,
-      });
-      onRecorded();
+      await client.post('/returns', { sale_item_id: saleItem.id, quantity: qty, reason: reason || undefined, restocked });
+      onRecorded(qty * Number(saleItem.unit_price));
     } catch (err) {
-      setError(err.message);
-    } finally {
+      setError(err);
       setLoading(false);
     }
   }
 
   return (
-    <div className="modal-overlay">
-      <form className="modal-card" onSubmit={handleSubmit}>
-        <h2>{t('returnModal.title')}</h2>
-        <p className="hint">
-          {t('returnModal.summary', {
-            product: saleItem.product_name,
-            quantity: saleItem.quantity,
-            price: Number(saleItem.unit_price).toLocaleString(),
-          })}
-        </p>
-        {error && <div className="error-banner">{error}</div>}
-
-        <div className="field">
-          <label htmlFor="quantity">{t('returnModal.quantityReturned')}</label>
-          <input
-            id="quantity"
-            type="number"
-            min="1"
-            max={saleItem.quantity}
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            required
-            autoFocus
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="reason">{t('salesHistory.reason')}</label>
-          <input id="reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('returnModal.reasonPlaceholder')} />
-        </div>
-        <div className="field">
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input type="checkbox" checked={restocked} onChange={(e) => setRestocked(e.target.checked)} />
-            {t('returnModal.restockLabel')}
-          </label>
-        </div>
-
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            {t('common.cancel')}
-          </button>
-          <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
-            {loading ? t('common.recording') : t('returnModal.title')}
-          </button>
-        </div>
-      </form>
-    </div>
+    <Dialog
+      title={t('returnModal.title')}
+      description={t('returnModal.summary', { product: saleItem.product_name, quantity: saleItem.quantity, price: formatRwf(saleItem.unit_price) })}
+      size="sm"
+      onClose={onClose}
+      onSubmit={submit}
+      footer={(
+        <>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" variant="primary" loading={loading} loadingText={t('common.processing')}>
+            {t('returnModal.confirm', { amount: formatRwf((Number(quantity) || 0) * Number(saleItem.unit_price)) })}
+          </Button>
+        </>
+      )}
+    >
+      {error && <ErrorState error={error} action={t('errors.actions.refund')} />}
+      <Field label={t('returnModal.quantityReturned')} required error={fieldError || undefined} hint={t('returnModal.remaining', { count: remaining })}>
+        <Input type="number" inputMode="numeric" min="1" max={remaining} value={quantity} onChange={(e) => setQuantity(e.target.value)} autoFocus />
+      </Field>
+      <Field label={t('salesHistory.reason')}>
+        <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('returnModal.reasonPlaceholder')} maxLength={500} />
+      </Field>
+      <Checkbox label={t('returnModal.restockLabel')} description={t('returnModal.restockHint')} checked={restocked} onChange={(e) => setRestocked(e.target.checked)} />
+    </Dialog>
   );
 }

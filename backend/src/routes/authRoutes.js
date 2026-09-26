@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbac');
 const { recordFailedLogin } = require('../audit/securityMonitor');
-const { login, logout, me, createEmployee, listEmployees, updateEmployee } = require('../controllers/authController');
+const { login, logout, me, updatePreferences, createEmployee, listEmployees, updateEmployee } = require('../controllers/authController');
 
 const router = express.Router();
 
@@ -23,6 +23,7 @@ const loginLimiter = rateLimit({
 router.post('/login', loginLimiter, login);
 router.post('/logout', logout);
 router.get('/me', authenticate, me);
+router.put('/me/preferences', authenticate, updatePreferences);
 router.post('/employees', authenticate, requirePermission('employees.manage'), createEmployee);
 router.get('/employees', authenticate, requirePermission('employees.manage'), listEmployees);
 router.patch('/employees/:id', authenticate, requirePermission('employees.manage'), updateEmployee);

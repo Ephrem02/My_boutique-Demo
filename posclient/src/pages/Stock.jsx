@@ -1,38 +1,40 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ArrowLeftRight, Boxes, History, PackagePlus, TriangleAlert } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import StockIntakeModal from '../components/StockIntakeModal';
-import StockTransferModal from '../components/StockTransferModal';
-import ReportDamageModal from '../components/ReportDamageModal';
+import StockMovementDialog from '../components/StockMovementDialog';
+import { PageHeader, StatusBadge, Tabs } from '../ui/display';
+import DataTable from '../ui/DataTable';
+import Button from '../ui/Button';
+import { useToast } from '../ui/Toast';
+import { formatNumber, formatWhen } from '../ui/format';
+
+const MOVEMENT_TONE = { stock_in: 'success', returned: 'info', transfer_in: 'neutral', transfer_out: 'neutral', sold: 'neutral', damaged: 'danger', adjustment: 'warning' };
 
 export default function Stock() {
   const { t } = useTranslation();
+  const toast = useToast();
   const { hasPermission } = useAuth();
+  // Movement history names who did what - hidden from cashiers (least privilege)
   const canSeeMovements = hasPermission('stock.movements.view');
-  const [levels, setLevels] = useState([]);
-  const [movements, setMovements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [showIntake, setShowIntake] = useState(false);
-  const [showTransfer, setShowTransfer] = useState(false);
-  const [showDamage, setShowDamage] = useState(false);
+  const [levels, setLevels] = useState(null);
+  const [movements, setMovements] = useState(null);
+  const [error, setError] = useState(null);
+  const [tab, setTab] = useState('levels');
+  const [dialog, setDialog] = useState(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
     try {
-      // Movement history names who did what - hidden from cashiers (least privilege)
       const [{ data: levelData }, movementRes] = await Promise.all([
         client.get('/stock/levels'),
         canSeeMovements ? client.get('/stock/movements') : Promise.resolve(null),
       ]);
       setLevels(levelData);
-      setMovements(movementRes ? movementRes.data.slice(0, 50) : []);
+      setMovements(movementRes ? movementRes.data.slice(0, 200) : []);
+      setError(null);
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      setError(err);
     }
   }, [canSeeMovements]);
 
@@ -40,106 +42,64 @@ export default function Stock() {
     load();
   }, [load]);
 
+  const location = (name) => t(`locations.${name}`, { defaultValue: name.replace('_', ' ') });
+
+  const levelColumns = [
+    { key: 'name', header: t('common.product'), sortable: true, mobile: 'title' },
+    { key: 'sku', header: t('products.sku'), sortable: true, mobile: 'subtitle', render: (l) => <span className="text-secondary">{l.sku}</span> },
+    { key: 'location', header: t('common.location'), sortable: true, mobile: 'meta', render: (l) => <StatusBadge tone="neutral" dot={false}>{location(l.location)}</StatusBadge> },
+    {
+      key: 'quantity', header: t('common.quantity'), align: 'right', sortable: true, mobile: 'value', sortValue: (l) => Number(l.quantity),
+      render: (l) => (Number(l.quantity) === 0 ? <StatusBadge tone="danger">{t('products.stockOut')}</StatusBadge> : formatNumber(l.quantity)),
+    },
+  ];
+
+  const movementColumns = [
+    { key: 'created_at', header: t('common.date'), sortable: true, mobile: 'subtitle', render: (m) => formatWhen(m.created_at, t) },
+    { key: 'product_name', header: t('common.product'), sortable: true, mobile: 'title' },
+    { key: 'type', header: t('common.type'), sortable: true, mobile: 'meta', render: (m) => <StatusBadge tone={MOVEMENT_TONE[m.type]}>{t(`movementTypes.${m.type}`, { defaultValue: m.type })}</StatusBadge> },
+    { key: 'location', header: t('common.location'), sortable: true, render: (m) => location(m.location) },
+    { key: 'quantity', header: t('common.quantity'), align: 'right', sortable: true, mobile: 'value', sortValue: (m) => Number(m.quantity), render: (m) => formatNumber(m.quantity) },
+    { key: 'performed_by_name', header: t('stock.by'), sortable: true },
+    { key: 'notes', header: t('common.notes'), render: (m) => <span className="text-secondary">{m.notes || '—'}</span> },
+  ];
+
+  const recorded = (kind) => (product) => {
+    setDialog(null);
+    toast.success(t(`stock.${kind}Done`, { name: product?.name || '' }));
+    load();
+  };
+
   return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{t('stock.title')}</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {hasPermission('stock.adjust') && (
-            <button className="btn btn-danger" onClick={() => setShowDamage(true)}>
-              {t('stock.reportDamage')}
-            </button>
-          )}
-          {hasPermission('stock.transfer') && (
-            <button className="btn" onClick={() => setShowTransfer(true)}>
-              {t('stock.transferStock')}
-            </button>
-          )}
-          {hasPermission('stock.intake') && (
-            <button className="btn btn-primary" onClick={() => setShowIntake(true)}>
-              {t('stock.stockIntake')}
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="page">
+      <PageHeader
+        title={t('stock.title')}
+        subtitle={t('stock.subtitle')}
+        actions={(
+          <>
+            {hasPermission('stock.adjust') && <Button variant="danger" icon={TriangleAlert} onClick={() => setDialog('damage')}>{t('stock.reportDamage')}</Button>}
+            {hasPermission('stock.transfer') && <Button icon={ArrowLeftRight} onClick={() => setDialog('transfer')}>{t('stock.transferStock')}</Button>}
+            {hasPermission('stock.intake') && <Button variant="primary" icon={PackagePlus} onClick={() => setDialog('intake')}>{t('stock.stockIntake')}</Button>}
+          </>
+        )}
+      />
 
-      {error && <div className="error-banner">{error}</div>}
-
-      <div className="section-title" style={{ marginTop: 0 }}>{t('stock.currentLevels')}</div>
-      {!loading && (
-        <table className="data-table" style={{ marginBottom: 28 }}>
-          <thead>
-            <tr>
-              <th>{t('products.sku')}</th>
-              <th>{t('common.product')}</th>
-              <th>{t('common.location')}</th>
-              <th>{t('common.quantity')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {levels.map((l, i) => (
-              <tr key={i}>
-                <td>{l.sku}</td>
-                <td>{l.name}</td>
-                <td>{t(`locations.${l.location}`, { defaultValue: l.location.replace('_', ' ') })}</td>
-                <td className="num">{l.quantity}</td>
-              </tr>
-            ))}
-            {levels.length === 0 && (
-              <tr>
-                <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
-                  {t('stock.noStockRecorded')}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      {canSeeMovements && (
+        <Tabs label={t('stock.title')} value={tab} onChange={setTab} className="page-tabs"
+          items={[{ id: 'levels', label: t('stock.currentLevels') }, { id: 'movements', label: t('stock.recentMovements') }]} />
       )}
 
-      {canSeeMovements && <div className="section-title">{t('stock.recentMovements')}</div>}
-      {!loading && canSeeMovements && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{t('common.date')}</th>
-              <th>{t('common.product')}</th>
-              <th>{t('common.type')}</th>
-              <th>{t('common.location')}</th>
-              <th>{t('common.quantity')}</th>
-              <th>{t('stock.by')}</th>
-              <th>{t('common.notes')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {movements.map((m) => (
-              <tr key={m.id}>
-                <td>{new Date(m.created_at).toLocaleString()}</td>
-                <td>{m.product_name}</td>
-                <td>{t(`movementTypes.${m.type}`, { defaultValue: m.type })}</td>
-                <td>{t(`locations.${m.location}`, { defaultValue: m.location.replace('_', ' ') })}</td>
-                <td className="num">{m.quantity}</td>
-                <td>{m.performed_by_name}</td>
-                <td style={{ color: 'var(--ink-muted)' }}>{m.notes || '—'}</td>
-              </tr>
-            ))}
-            {movements.length === 0 && (
-              <tr>
-                <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
-                  {t('stock.noMovements')}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      {tab === 'levels' && (
+        <DataTable caption={t('stock.currentLevels')} columns={levelColumns} rows={levels} rowKey={(l) => `${l.product_id}-${l.location}`}
+          loading={!levels} error={error} onRetry={load} searchable searchPlaceholder={t('products.searchPlaceholder')}
+          initialSort={{ key: 'name', dir: 'asc' }} empty={{ icon: Boxes, title: t('stock.noStockRecorded'), description: t('stock.noStockHint') }} />
+      )}
+      {tab === 'movements' && canSeeMovements && (
+        <DataTable caption={t('stock.recentMovements')} columns={movementColumns} rows={movements} loading={!movements} error={error} onRetry={load}
+            searchable searchPlaceholder={t('stock.searchMovements')} empty={{ icon: History, title: t('stock.noMovements'), description: t('stock.noMovementsHint') }} />
       )}
 
-      {showIntake && <StockIntakeModal onClose={() => setShowIntake(false)} onRecorded={() => { setShowIntake(false); load(); }} />}
-      {showTransfer && (
-        <StockTransferModal onClose={() => setShowTransfer(false)} onRecorded={() => { setShowTransfer(false); load(); }} />
-      )}
-      {showDamage && (
-        <ReportDamageModal onClose={() => setShowDamage(false)} onRecorded={() => { setShowDamage(false); load(); }} />
-      )}
+      {dialog && <StockMovementDialog kind={dialog} onClose={() => setDialog(null)} onRecorded={recorded(dialog)} />}
     </div>
   );
 }

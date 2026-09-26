@@ -84,7 +84,7 @@ async function login(req, res, next) {
     await audit(req, { action: 'auth.login', entityType: 'user', entityId: user.id, actorUserId: user.id, actorRole: user.role });
 
     res.json({
-      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, permissions },
+      user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role, permissions, preferences: user.preferences || {} },
     });
   } catch (err) {
     next(err);
@@ -106,7 +106,29 @@ async function logout(req, res) {
 // reload, since the token itself lives in an httpOnly cookie it can't read.
 async function me(req, res) {
   const { id, full_name, email, role, permissions } = req.user;
-  res.json({ user: { id, full_name, email, role, permissions } });
+  const row = await db('users').where({ id }).first('preferences');
+  res.json({ user: { id, full_name, email, role, permissions, preferences: row?.preferences || {} } });
+}
+
+// Personal preferences a user may set for themselves - an allowlist, so the
+// column can't be used to store arbitrary data.
+const PREFERENCE_RULES = {
+  appearance: (v) => ['light', 'dark', 'system'].includes(v),
+};
+
+// PUT /api/auth/me/preferences { appearance }
+async function updatePreferences(req, res) {
+  const input = req.body || {};
+  const keys = Object.keys(input);
+  if (!keys.length) return res.status(400).json({ error: 'No preferences to update' });
+  for (const key of keys) {
+    if (!PREFERENCE_RULES[key]) return res.status(400).json({ error: `Unknown preference: ${String(key).slice(0, 40)}` });
+    if (!PREFERENCE_RULES[key](input[key])) return res.status(400).json({ error: `Invalid value for ${key}` });
+  }
+  const current = (await db('users').where({ id: req.user.id }).first('preferences'))?.preferences || {};
+  const next = { ...current, ...input };
+  await db('users').where({ id: req.user.id }).update({ preferences: JSON.stringify(next) });
+  res.json({ preferences: next });
 }
 
 const EMPLOYEE_COLUMNS = ['users.id', 'users.full_name', 'users.email', 'users.phone', 'users.status', 'roles.name as role', 'users.last_login_at'];
@@ -321,4 +343,4 @@ async function updateEmployee(req, res) {
   }
 }
 
-module.exports = { login, logout, me, createEmployee, listEmployees, updateEmployee };
+module.exports = { login, logout, me, updatePreferences, createEmployee, listEmployees, updateEmployee };

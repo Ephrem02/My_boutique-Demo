@@ -1,15 +1,23 @@
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Download, Filter, ShieldCheck } from 'lucide-react';
 import client from '../../api/client';
+import Button from '../../ui/Button';
+import Dialog from '../../ui/Dialog';
+import { Field, Input, Select } from '../../ui/Field';
+import { DescriptionList, ErrorState, StatusBadge } from '../../ui/display';
+import DataTable from '../../ui/DataTable';
+import { formatDateTime, formatWhen } from '../../ui/format';
+import AdminSection from './AdminSection';
 
-const PAGE_SIZE = 50;
 const EMPTY = { action: '', role: '', result: '', entity_type: '', entity_id: '', ip: '', user_id: '', from: '', to: '', q: '' };
+const RESULT_TONE = { success: 'success', denied: 'warning', failure: 'danger' };
 
 function JsonBlock({ label, value }) {
   if (!value) return null;
   return (
-    <div style={{ marginTop: 6 }}>
-      <strong>{label}</strong>
+    <div className="json-section">
+      <div className="form-section-title">{label}</div>
       <pre className="json-block">{JSON.stringify(value, null, 2)}</pre>
     </div>
   );
@@ -19,33 +27,28 @@ export default function AuditTab() {
   const { t } = useTranslation();
   const [filters, setFilters] = useState(EMPTY);
   const [applied, setApplied] = useState(EMPTY);
-  const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(null);
+  const [error, setError] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [exportError, setExportError] = useState(null);
 
   const params = useCallback(() => Object.fromEntries(Object.entries(applied).filter(([, v]) => v !== '')), [applied]);
 
   const load = useCallback(async () => {
     try {
-      setData((await client.get('/admin/audit-logs', { params: { ...params(), page, limit: PAGE_SIZE } })).data);
-      setError('');
+      setData((await client.get('/admin/audit-logs', { params: { ...params(), limit: 200 } })).data);
+      setError(null);
     } catch (err) {
-      setError(err.message);
+      setError(err);
     }
-  }, [params, page]);
+  }, [params]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  function apply(e) {
-    e.preventDefault();
-    setApplied(filters);
-    setPage(1);
-  }
-
   async function exportCsv() {
+    setExportError(null);
     try {
       const res = await client.get('/admin/audit-logs/export', { params: params(), responseType: 'blob' });
       const url = URL.createObjectURL(res.data);
@@ -55,88 +58,78 @@ export default function AuditTab() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err.message);
+      setExportError(err);
     }
   }
 
   const set = (key) => (e) => setFilters({ ...filters, [key]: e.target.value });
-  const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
+  const columns = [
+    { key: 'created_at', header: t('common.date'), mobile: 'subtitle', render: (r) => formatWhen(r.created_at, t) },
+    { key: 'actor', header: t('admin.audit.actor'), render: (r) => <span className="cell-stack"><span>{r.actor_name || (r.actor_user_id ? `#${r.actor_user_id}` : t('admin.audit.system'))}</span><span className="cell-note">{r.actor_role || ''}</span></span> },
+    { key: 'action', header: t('admin.audit.action'), mobile: 'title', render: (r) => <code>{r.action}</code> },
+    { key: 'entity', header: t('admin.audit.entity'), render: (r) => (r.entity_type ? `${r.entity_type} ${r.entity_id ?? ''}` : '—') },
+    { key: 'result', header: t('admin.audit.result'), mobile: 'meta', render: (r) => <StatusBadge tone={RESULT_TONE[r.result]}>{t(`admin.audit.results.${r.result}`)}</StatusBadge> },
+    { key: 'ip', header: 'IP', render: (r) => <span className="num">{r.ip || '—'}</span> },
+  ];
 
   return (
-    <>
-      <p className="hint-text">{t('admin.audit.intro')}</p>
-      <form className="filter-grid" onSubmit={apply}>
-        <select value={filters.action} onChange={set('action')} aria-label={t('admin.audit.action')}>
-          <option value="">{t('admin.audit.anyAction')}</option>
-          {(data?.actions || []).map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <select value={filters.role} onChange={set('role')} aria-label={t('admin.audit.role')}>
-          <option value="">{t('admin.audit.anyRole')}</option>
-          {['cashier', 'store_keeper', 'store_manager'].map((r) => <option key={r} value={r}>{t(`roles.${r}`, { defaultValue: r })}</option>)}
-        </select>
-        <select value={filters.result} onChange={set('result')} aria-label={t('admin.audit.result')}>
-          <option value="">{t('admin.audit.anyResult')}</option>
-          {['success', 'denied', 'failure'].map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <input placeholder={t('admin.audit.userId')} value={filters.user_id} onChange={set('user_id')} inputMode="numeric" />
-        <input placeholder={t('admin.audit.entityType')} value={filters.entity_type} onChange={set('entity_type')} />
-        <input placeholder={t('admin.audit.entityId')} value={filters.entity_id} onChange={set('entity_id')} />
-        <input placeholder="IP" value={filters.ip} onChange={set('ip')} />
-        <input placeholder={t('admin.audit.search')} value={filters.q} onChange={set('q')} />
-        <input type="date" value={filters.from} onChange={set('from')} aria-label={t('admin.audit.from')} />
-        <input type="date" value={filters.to} onChange={set('to')} aria-label={t('admin.audit.to')} />
-        <button type="submit" className="btn btn-primary">{t('admin.audit.apply')}</button>
-        <button type="button" className="btn" onClick={exportCsv}>{t('admin.audit.export')}</button>
+    <AdminSection title={t('admin.sections.audit.title')} description={t('admin.audit.intro')}
+      actions={<Button icon={Download} onClick={exportCsv}>{t('admin.audit.export')}</Button>}>
+      {exportError && <ErrorState error={exportError} action={t('errors.actions.export')} />}
+      <form className="panel filter-panel" onSubmit={(e) => { e.preventDefault(); setApplied(filters); }}>
+        <div className="filter-grid">
+          <Field label={t('admin.audit.action')}>
+            <Select value={filters.action} onChange={set('action')}>
+              <option value="">{t('admin.audit.anyAction')}</option>
+              {(data?.actions || []).map((a) => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </Field>
+          <Field label={t('admin.audit.role')}>
+            <Select value={filters.role} onChange={set('role')}>
+              <option value="">{t('admin.audit.anyRole')}</option>
+              {['cashier', 'store_keeper', 'store_manager'].map((r) => <option key={r} value={r}>{t(`roles.${r}`, { defaultValue: r })}</option>)}
+            </Select>
+          </Field>
+          <Field label={t('admin.audit.result')}>
+            <Select value={filters.result} onChange={set('result')}>
+              <option value="">{t('admin.audit.anyResult')}</option>
+              {['success', 'denied', 'failure'].map((r) => <option key={r} value={r}>{t(`admin.audit.results.${r}`)}</option>)}
+            </Select>
+          </Field>
+          <Field label={t('admin.audit.userId')}><Input inputMode="numeric" value={filters.user_id} onChange={set('user_id')} /></Field>
+          <Field label={t('admin.audit.entityType')}><Input value={filters.entity_type} onChange={set('entity_type')} /></Field>
+          <Field label={t('admin.audit.entityId')}><Input value={filters.entity_id} onChange={set('entity_id')} /></Field>
+          <Field label="IP"><Input value={filters.ip} onChange={set('ip')} /></Field>
+          <Field label={t('admin.audit.search')}><Input value={filters.q} onChange={set('q')} /></Field>
+          <Field label={t('admin.audit.from')}><Input type="date" value={filters.from} onChange={set('from')} /></Field>
+          <Field label={t('admin.audit.to')}><Input type="date" value={filters.to} onChange={set('to')} /></Field>
+        </div>
+        <div className="panel-footer-actions">
+          <Button variant="ghost" onClick={() => { setFilters(EMPTY); setApplied(EMPTY); }}>{t('admin.audit.clear')}</Button>
+          <Button type="submit" variant="primary" icon={Filter}>{t('admin.audit.apply')}</Button>
+        </div>
       </form>
 
-      {error && <div className="error-banner">{error}</div>}
-      {data && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{t('common.date')}</th>
-              <th>{t('admin.audit.actor')}</th>
-              <th>{t('admin.audit.action')}</th>
-              <th>{t('admin.audit.entity')}</th>
-              <th>{t('admin.audit.result')}</th>
-              <th>IP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((r) => (
-              <Fragment key={r.id}>
-                <tr className="clickable" onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.created_at).toLocaleString()}</td>
-                  <td>{r.actor_name || (r.actor_user_id ? `#${r.actor_user_id}` : '—')}<div className="hint">{r.actor_role || ''}</div></td>
-                  <td><code>{r.action}</code></td>
-                  <td>{r.entity_type ? `${r.entity_type} ${r.entity_id ?? ''}` : '—'}</td>
-                  <td><span className={`badge ${r.result === 'success' ? 'paid' : 'unpaid'}`}>{r.result}</span></td>
-                  <td>{r.ip || '—'}</td>
-                </tr>
-                {expanded === r.id && (
-                  <tr key={`${r.id}-detail`}>
-                    <td colSpan={6} style={{ background: 'var(--surface)', fontSize: 13 }}>
-                      <div><strong>{t('admin.audit.requestId')}:</strong> <code>{r.request_id || '—'}</code></div>
-                      <div><strong>{t('admin.audit.userAgent')}:</strong> {r.user_agent || '—'}</div>
-                      <JsonBlock label={t('admin.audit.oldValues')} value={r.old_values} />
-                      <JsonBlock label={t('admin.audit.newValues')} value={r.new_values} />
-                      <JsonBlock label={t('admin.audit.metadata')} value={r.metadata} />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-            {data.items.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--ink-muted)' }}>{t('admin.audit.empty')}</td></tr>}
-          </tbody>
-        </table>
+      <DataTable caption={t('admin.sections.audit.title')} columns={columns} rows={data?.items} loading={!data} error={error} onRetry={load}
+        onRowClick={setDetail} rowLabel={(r) => t('admin.audit.openEntry', { action: r.action })} pageSize={50}
+        empty={{ icon: ShieldCheck, title: t('admin.audit.empty') }} />
+      {data && data.total > data.items.length && <p className="field-hint">{t('admin.audit.showingLatest', { shown: data.items.length, total: data.total })}</p>}
+
+      {detail && (
+        <Dialog title={detail.action} description={formatDateTime(detail.created_at)} size="lg" onClose={() => setDetail(null)}>
+          <DescriptionList items={[
+            { label: t('admin.audit.actor'), value: `${detail.actor_name || (detail.actor_user_id ? `#${detail.actor_user_id}` : t('admin.audit.system'))}${detail.actor_role ? ` · ${detail.actor_role}` : ''}` },
+            { label: t('admin.audit.entity'), value: detail.entity_type ? `${detail.entity_type} ${detail.entity_id ?? ''}` : '—' },
+            { label: t('admin.audit.result'), value: <StatusBadge tone={RESULT_TONE[detail.result]}>{t(`admin.audit.results.${detail.result}`)}</StatusBadge> },
+            { label: 'IP', value: detail.ip || '—' },
+            { label: t('admin.audit.requestId'), value: <code>{detail.request_id || '—'}</code> },
+            { label: t('admin.audit.userAgent'), value: detail.user_agent || '—' },
+          ]} />
+          <JsonBlock label={t('admin.audit.oldValues')} value={detail.old_values} />
+          <JsonBlock label={t('admin.audit.newValues')} value={detail.new_values} />
+          <JsonBlock label={t('admin.audit.metadata')} value={detail.metadata} />
+        </Dialog>
       )}
-      {pages > 1 && (
-        <div className="pager">
-          <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t('common.previous')}</button>
-          <span className="num">{t('common.pageOf', { page, pages })}</span>
-          <button className="btn" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>{t('common.next')}</button>
-        </div>
-      )}
-    </>
+    </AdminSection>
   );
 }

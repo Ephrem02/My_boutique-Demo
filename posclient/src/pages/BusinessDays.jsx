@@ -1,74 +1,74 @@
-import { useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { ArrowLeft, CalendarCheck2, History } from 'lucide-react';
 import client from '../api/client';
-import DayBoard from '../components/businessDay/DayBoard';
-import { HEALTH_BADGE, rwf, signedRwf, formatDate } from '../components/businessDay/format';
+import ClosingReport, { DAY_STATUS_TONE, HealthBadge, PeopleList } from '../components/businessDay/ClosingReport';
+import { PageHeader, Panel, StatusBadge, ErrorState, SkeletonPanel, EmptyState, Metric } from '../ui/display';
+import DataTable from '../ui/DataTable';
+import Button from '../ui/Button';
 import { humanizeType } from '../utils/notificationDisplay';
+import { formatRwf, formatDate, formatTime, formatNumber } from '../ui/format';
 
-const BAND_BADGE = { normal: 'paid', attention: 'partial', critical: 'unpaid' };
+const BAND_TONE = { normal: 'success', attention: 'warning', critical: 'danger' };
 
 /** /business-days - every business day (managers only; enforced by the API). */
 export function BusinessDayHistory() {
   const { t } = useTranslation();
-  const [page, setPage] = useState(1);
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setData((await client.get('/business-days', { params: { limit: 100 } })).data);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    }
+  }, []);
 
   useEffect(() => {
-    client.get('/business-days', { params: { page } }).then(({ data: d }) => setData(d)).catch((err) => setError(err.message));
-  }, [page]);
+    load();
+  }, [load]);
 
-  const pages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
+  const columns = [
+    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'title', render: (d) => formatDate(d.business_date, { weekday: true }) },
+    {
+      key: 'status', header: t('common.status'), sortable: true, mobile: 'meta',
+      render: (d) => (
+        <span className="badge-group">
+          <StatusBadge tone={DAY_STATUS_TONE[d.status]}>{t(`businessDay.status.${d.status}`)}</StatusBadge>
+          {d.reopened_count > 0 && <StatusBadge tone="danger">{t('businessDay.reopenedTimes', { count: d.reopened_count })}</StatusBadge>}
+        </span>
+      ),
+    },
+    { key: 'opened_by_name', header: t('businessDay.people.openedBy'), sortable: true, render: (d) => d.opened_by_name || '—' },
+    { key: 'submitted_by_name', header: t('businessDay.people.submittedBy'), sortable: true, mobile: 'subtitle', render: (d) => d.submitted_by_name || '—' },
+    { key: 'net_sales', header: t('businessDay.fig.netSales'), align: 'right', sortable: true, mobile: 'value', sortValue: (d) => d.net_sales ?? -1, render: (d) => (d.net_sales === null ? '—' : formatRwf(d.net_sales)) },
+    {
+      key: 'variance', header: t('businessDay.fig.variance'), align: 'right', sortable: true, mobile: 'meta', sortValue: (d) => Math.abs(d.variance ?? 0),
+      render: (d) => (d.variance === null ? '—' : <StatusBadge tone={BAND_TONE[d.variance_band]}>{formatRwf(d.variance, { signed: true })}</StatusBadge>),
+    },
+    {
+      key: 'issues', header: t('businessDay.corrections'), mobile: 'meta',
+      render: (d) => (
+        <span className="badge-group">
+          {d.pending_corrections > 0 && <StatusBadge tone="warning">{t('businessDay.pendingCorrections', { count: d.pending_corrections })}</StatusBadge>}
+          {d.adjustments > 0 && <StatusBadge tone="info">{t('businessDay.adjustmentsCount', { count: d.adjustments })}</StatusBadge>}
+          {!d.pending_corrections && !d.adjustments && <span className="text-muted">—</span>}
+        </span>
+      ),
+    },
+  ];
+
   return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{t('businessDay.history')}</h1>
-        <Link className="btn" to="/">{t('businessDay.backToDashboard')}</Link>
-      </div>
-      {error && <div className="error-banner">{error}</div>}
-      {data && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{t('businessDay.businessDate')}</th>
-              <th>{t('common.status')}</th>
-              <th>{t('businessDay.people.openedBy')}</th>
-              <th>{t('businessDay.people.submittedBy')}</th>
-              <th>{t('businessDay.fig.netSales')}</th>
-              <th>{t('businessDay.fig.variance')}</th>
-              <th>{t('businessDay.corrections')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((d) => (
-              <tr key={d.id}>
-                <td><Link to={`/business-days/${d.id}`}>{formatDate(d.business_date)}</Link></td>
-                <td>
-                  {t(`businessDay.status.${d.status}`)}
-                  {d.reopened_count > 0 && <span className="badge unpaid" style={{ marginLeft: 6 }}>{t('businessDay.reopenedTimes', { count: d.reopened_count })}</span>}
-                </td>
-                <td>{d.opened_by_name || '—'}</td>
-                <td>{d.submitted_by_name || '—'}</td>
-                <td className="num">{d.net_sales === null ? '—' : rwf(d.net_sales)}</td>
-                <td>{d.variance === null ? '—' : <span className={`badge ${BAND_BADGE[d.variance_band]}`}>{signedRwf(d.variance)}</span>}</td>
-                <td>
-                  {d.pending_corrections > 0 && <span className="badge partial">{t('businessDay.pendingCorrections', { count: d.pending_corrections })}</span>}
-                  {d.adjustments > 0 && <span className="hint"> {t('businessDay.adjustmentsCount', { count: d.adjustments })}</span>}
-                </td>
-              </tr>
-            ))}
-            {data.items.length === 0 && <tr><td colSpan={7} style={{ color: 'var(--ink-muted)' }}>{t('businessDay.noClosingYet')}</td></tr>}
-          </tbody>
-        </table>
-      )}
-      {pages > 1 && (
-        <div className="pager">
-          <button className="btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t('common.previous')}</button>
-          <span className="num">{t('common.pageOf', { page, pages })}</span>
-          <button className="btn" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>{t('common.next')}</button>
-        </div>
-      )}
+    <div className="page">
+      <PageHeader title={t('businessDay.history')} subtitle={t('businessDay.historySubtitle')} />
+      <DataTable caption={t('businessDay.history')} columns={columns} rows={data?.items} loading={!data} error={error} onRetry={load}
+        initialSort={{ key: 'business_date', dir: 'desc' }} onRowClick={(d) => navigate(`/business-days/${d.id}`)}
+        rowLabel={(d) => t('businessDay.openDay', { date: formatDate(d.business_date) })}
+        empty={{ icon: CalendarCheck2, title: t('businessDay.noClosingYet'), description: t('dashboard.noClosingHint') }} />
     </div>
   );
 }
@@ -77,68 +77,93 @@ function timelineLabel(item, t) {
   if (item.kind === 'event') return t(`notificationTypes.${item.code}`, { defaultValue: humanizeType(item.code) });
   return t(`businessDay.timeline.${item.code.replace(/\./g, '_')}`, { defaultValue: item.code });
 }
+const TIMELINE_TONE = { critical: 'danger', warning: 'warning', info: 'info', denied: 'warning', failure: 'danger' };
 
-/** /business-days/:id - one day's board, closing versions and accountability timeline. */
+/** /business-days/:id - one day's report, closing versions and accountability timeline. */
 export function BusinessDayDetail() {
   const { t } = useTranslation();
   const { id } = useParams();
   const [board, setBoard] = useState(null);
   const [timeline, setTimeline] = useState(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    Promise.all([client.get(`/business-days/${id}`), client.get(`/business-days/${id}/timeline`)])
-      .then(([b, tl]) => {
-        setBoard(b.data);
-        setTimeline(tl.data.items);
-      })
-      .catch((err) => setError(err.message));
+  const load = useCallback(async () => {
+    try {
+      const [b, tl] = await Promise.all([client.get(`/business-days/${id}`), client.get(`/business-days/${id}/timeline`)]);
+      setBoard(b.data);
+      setTimeline(tl.data.items);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    }
   }, [id]);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{board ? formatDate(board.day.business_date) : t('businessDay.history')}</h1>
-        <Link className="btn" to="/business-days">{t('businessDay.history')}</Link>
-      </div>
-      {error && <div className="error-banner">{error}</div>}
-      <div className="boards">
-        {board && <DayBoard board={board} title={board.kind === 'live' ? t('businessDay.today') : t('businessDay.closingReport')} />}
-        <section className="day-board">
-          <div className="day-board-title">{t('businessDay.timeline.title')}</div>
-          {board?.health && (
-            <p>
-              <span className={`badge ${HEALTH_BADGE[board.health.status]}`}>{t(`businessDay.health.${board.health.status}`)}</span>{' '}
-              <span className="hint">{board.health.reasons.map((r) => t(`businessDay.reasons.${r}`, { defaultValue: r })).join(' · ')}</span>
-            </p>
-          )}
-          {board?.versions?.length > 1 && (
-            <div className="board-section">
-              <div className="board-section-title">{t('businessDay.versions')}</div>
-              {board.versions.map((v) => (
-                <div key={v.id} className="board-row">
-                  <span>v{v.version} · {v.submitted_by_name} · {new Date(v.submitted_at).toLocaleString()}</span>
-                  <span className="num">{signedRwf(v.variance)}</span>
+    <div className="page">
+      <PageHeader
+        title={board ? formatDate(board.day.business_date, { weekday: true }) : t('businessDay.history')}
+        subtitle={board ? t(`businessDay.status.${board.day.status}`) : undefined}
+        actions={<Button icon={ArrowLeft} to="/business-days">{t('businessDay.history')}</Button>}
+      />
+      {error && <ErrorState error={error} onRetry={load} />}
+      {!board && !error && <div className="dashboard-grid"><SkeletonPanel lines={8} /><SkeletonPanel lines={8} /></div>}
+      {board && (
+        <div className="dashboard-grid">
+          <div className="dashboard-main">
+            {board.kind === 'live' ? (
+              <Panel title={t('businessDay.today')} actions={<HealthBadge health={board.health} />}>
+                <div className="metric-row">
+                  <Metric size="lg" label={t('businessDay.fig.salesSoFar')} value={formatRwf(board.figures.sales.gross)}
+                    hint={t('businessDay.transactionsCount', { count: board.figures.sales.transactions })} />
+                  <Metric size="lg" label={t('businessDay.fig.expectedCash')} value={formatRwf(board.figures.cash.expected_cash)} />
                 </div>
-              ))}
-            </div>
-          )}
-          <ol className="timeline">
-            {(timeline || []).map((item) => (
-              <li key={item.id} className={`timeline-item ${item.severity || item.result || ''}`}>
-                <span className="timeline-time num">{new Date(item.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                <span className="timeline-text">
-                  <strong>{timelineLabel(item, t)}</strong>
-                  {item.actor_name && <span className="hint"> · {item.actor_name}</span>}
-                  {item.entity_type && item.entity_type !== 'business_day' && <span className="hint"> · {item.entity_type} #{item.entity_id}</span>}
-                  {item.occurrences > 1 && <span className="hint"> · ×{item.occurrences}</span>}
-                </span>
-              </li>
-            ))}
-            {timeline && timeline.length === 0 && <li className="hint">{t('businessDay.timeline.empty')}</li>}
-          </ol>
-        </section>
-      </div>
+                <PeopleList people={board.people} closed={false} />
+              </Panel>
+            ) : (
+              <ClosingReport board={board} title={t('businessDay.closingReport')} headingLevel={2} />
+            )}
+            {board.versions?.length > 1 && (
+              <Panel title={t('businessDay.versions')} subtitle={t('businessDay.versionsHint')}>
+                <DataTable caption={t('businessDay.versions')} rows={board.versions}
+                  columns={[
+                    { key: 'version', header: t('businessDay.version'), mobile: 'title', render: (v) => `v${v.version}` },
+                    { key: 'submitted_by_name', header: t('businessDay.people.submittedBy'), mobile: 'subtitle' },
+                    { key: 'submitted_at', header: t('common.date'), render: (v) => `${formatDate(v.submitted_at)} ${formatTime(v.submitted_at)}` },
+                    { key: 'counted_cash', header: t('businessDay.fig.countedCash'), align: 'right', render: (v) => formatRwf(v.counted_cash) },
+                    { key: 'variance', header: t('businessDay.fig.variance'), align: 'right', mobile: 'value', render: (v) => formatRwf(v.variance, { signed: true }) },
+                  ]} />
+              </Panel>
+            )}
+          </div>
+          <aside className="dashboard-side">
+            <Panel title={t('businessDay.timeline.title')} icon={History} subtitle={timeline ? t('businessDay.timeline.count', { count: formatNumber(timeline.length) }) : undefined}>
+              {timeline && timeline.length === 0 && <EmptyState compact title={t('businessDay.timeline.empty')} />}
+              <ol className="timeline">
+                {(timeline || []).map((item) => (
+                  <li key={item.id} className={`timeline-item tone-${TIMELINE_TONE[item.severity || item.result] || 'neutral'}`}>
+                    <span className="timeline-time num">{formatTime(item.at)}</span>
+                    <span className="timeline-text">
+                      <strong>{timelineLabel(item, t)}</strong>
+                      <span className="text-secondary">
+                        {item.actor_name && ` · ${item.actor_name}`}
+                        {item.entity_type && item.entity_type !== 'business_day' && ` · ${item.entity_type} #${item.entity_id}`}
+                        {item.occurrences > 1 && ` · ×${item.occurrences}`}
+                      </span>
+                      {(item.severity || (item.result && item.result !== 'success')) && (
+                        <span className="sr-only">({item.severity || item.result})</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </Panel>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

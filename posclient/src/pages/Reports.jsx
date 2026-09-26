@@ -1,56 +1,47 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { BarChart3, PackageX, Wallet } from 'lucide-react';
 import client from '../api/client';
-import StatTile from '../components/StatTile';
 import { useAuth } from '../context/AuthContext';
+import { PageHeader, Panel, Metric, ErrorState, SkeletonPanel, EmptyState, DescriptionList } from '../ui/display';
+import { Field, Input } from '../ui/Field';
+import DataTable from '../ui/DataTable';
+import BarChart from '../ui/BarChart';
+import { formatRwf, formatRwfCompact, formatNumber, formatDate } from '../ui/format';
 
 function isoDaysAgo(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+const PRESETS = [7, 30, 90];
 
 export default function Reports() {
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const [from, setFrom] = useState(isoDaysAgo(30));
   const [to, setTo] = useState(isoDaysAgo(0));
-  const [salesSummary, setSalesSummary] = useState(null);
-  const [topProducts, setTopProducts] = useState([]);
-  const [shrinkage, setShrinkage] = useState(null);
-  const [financial, setFinancial] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
 
   const canSales = hasPermission('reports.sales.view');
   const canShrinkage = hasPermission('reports.shrinkage.view');
   const canFinancial = hasPermission('reports.financial.view');
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+    setData(null);
     try {
       const params = { from, to };
-      const requests = [];
-      if (canSales) {
-        requests.push(client.get('/reports/sales-summary', { params }));
-        requests.push(client.get('/reports/top-products', { params: { ...params, limit: 8 } }));
-      }
-      if (canShrinkage) requests.push(client.get('/reports/shrinkage', { params }));
-      if (canFinancial) requests.push(client.get('/reports/financial-summary', { params }));
-
-      const results = await Promise.all(requests);
-      let i = 0;
-      if (canSales) {
-        setSalesSummary(results[i++].data);
-        setTopProducts(results[i++].data);
-      }
-      if (canShrinkage) setShrinkage(results[i++].data);
-      if (canFinancial) setFinancial(results[i++].data);
+      const [sales, top, shrinkage, financial] = await Promise.all([
+        canSales ? client.get('/reports/sales-summary', { params }) : null,
+        canSales ? client.get('/reports/top-products', { params: { ...params, limit: 8 } }) : null,
+        canShrinkage ? client.get('/reports/shrinkage', { params }) : null,
+        canFinancial ? client.get('/reports/financial-summary', { params }) : null,
+      ]);
+      setData({ sales: sales?.data, top: top?.data, shrinkage: shrinkage?.data, financial: financial?.data });
+      setError(null);
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      setError(err);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to]);
@@ -59,152 +50,99 @@ export default function Reports() {
     load();
   }, [load]);
 
+  const activePreset = PRESETS.find((d) => from === isoDaysAgo(d) && to === isoDaysAgo(0));
+  const f = data?.financial;
+  const s = data?.sales;
+
   return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{t('reports.title')}</h1>
+    <div className="page">
+      <PageHeader title={t('reports.title')} subtitle={t('reports.period', { from: formatDate(from), to: formatDate(to) })} />
+
+      <div className="report-filters">
+        <div className="segmented" role="group" aria-label={t('reports.quickRange')}>
+          {PRESETS.map((d) => (
+            <button key={d} type="button" className={`segmented-option${activePreset === d ? ' active' : ''}`} aria-pressed={activePreset === d}
+              onClick={() => { setFrom(isoDaysAgo(d)); setTo(isoDaysAgo(0)); }}>
+              {t('reports.lastDays', { count: d })}
+            </button>
+          ))}
+        </div>
+        <Field label={t('reports.from')} inline><Input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label={t('reports.to')} inline><Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center' }}>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label htmlFor="from">{t('reports.from')}</label>
-          <input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+      {error && <ErrorState error={error} onRetry={load} />}
+      {!canSales && !canShrinkage && !canFinancial && <EmptyState icon={BarChart3} title={t('reports.noPermission')} />}
+      {!data && !error && <div className="stack"><SkeletonPanel lines={3} /><SkeletonPanel lines={6} /></div>}
+
+      {data && (
+        <div className="stack">
+          {f && (
+            <Panel title={t('reports.financialSummary')} icon={Wallet}>
+              <div className="report-headline">
+                <Metric size="xl" label={t('reports.revenue')} value={formatRwf(f.revenue)}
+                  hint={t('reports.revenueSplit', { pos: formatRwf(f.pos_revenue), institutions: formatRwf(f.institution_revenue) })} />
+                <Metric size="lg" label={t('reports.grossProfit')} value={formatRwf(f.gross_profit)} tone={f.gross_profit < 0 ? 'danger' : undefined} />
+                <Metric size="lg" label={t('reports.netProfit')} value={formatRwf(f.net_profit)} tone={f.net_profit < 0 ? 'danger' : 'success'} hint={t('reports.afterShrinkage')} />
+              </div>
+              <DescriptionList className="report-dl" items={[
+                { label: t('reports.cogs'), value: formatRwf(f.cogs) },
+                { label: t('reports.shrinkageValue'), value: formatRwf(-f.shrinkage_value), tone: f.shrinkage_value ? 'danger' : undefined },
+                { label: t('reports.supplierPayablesOwed'), value: formatRwf(f.supplier_payables_outstanding), tone: f.supplier_payables_outstanding ? 'warning' : undefined },
+                { label: t('reports.institutionReceivablesDue'), value: formatRwf(f.institution_receivables_outstanding) },
+              ]} />
+            </Panel>
+          )}
+
+          {s && (
+            <Panel title={t('reports.salesSection')} icon={BarChart3}>
+              <div className="metric-strip">
+                <Metric size="sm" label={t('reports.salesCount')} value={formatNumber(s.sale_count)} />
+                <Metric size="sm" label={t('reports.revenue')} value={formatRwf(s.revenue)} />
+                <Metric size="sm" label={t('reports.averageSale')} value={formatRwf(s.sale_count ? s.revenue / s.sale_count : 0)} />
+                <Metric size="sm" label={t('reports.voidedSales')} value={formatNumber(s.voided_count)} tone={s.voided_count ? 'danger' : undefined} />
+              </div>
+              {s.by_day.length > 0 ? (
+                <BarChart caption={t('reports.revenueByDay')} format={formatRwf}
+                  data={s.by_day.map((d) => ({ label: formatDate(String(d.day).slice(0, 10)), shortLabel: String(d.day).slice(8, 10), value: d.revenue }))} />
+              ) : (
+                <EmptyState compact icon={BarChart3} title={t('reports.noSalesInPeriod')} />
+              )}
+              <div className="grid-2 report-tables">
+                <DataTable caption={t('reports.paymentMethod')} rowKey="payment_method" rows={s.by_payment_method} pageSize={10}
+                  empty={{ title: t('reports.noSalesInPeriod') }}
+                  columns={[
+                    { key: 'payment_method', header: t('reports.paymentMethod'), mobile: 'title', render: (r) => t(`paymentMethods.${r.payment_method}`, { defaultValue: r.payment_method.replace('_', ' ') }) },
+                    { key: 'sale_count', header: t('reports.sales'), align: 'right', render: (r) => formatNumber(r.sale_count) },
+                    { key: 'revenue', header: t('reports.revenue'), align: 'right', mobile: 'value', render: (r) => formatRwf(r.revenue) },
+                  ]} />
+                <DataTable caption={t('reports.topProducts')} rowKey="product_id" rows={data.top} pageSize={10}
+                  empty={{ title: t('reports.noSalesInPeriod') }}
+                  columns={[
+                    { key: 'name', header: t('reports.topProducts'), mobile: 'title' },
+                    { key: 'quantity_sold', header: t('reports.qtySold'), align: 'right', render: (p) => formatNumber(p.quantity_sold) },
+                    { key: 'revenue', header: t('reports.revenue'), align: 'right', mobile: 'value', render: (p) => formatRwfCompact(p.revenue) },
+                  ]} />
+              </div>
+            </Panel>
+          )}
+
+          {data.shrinkage && (
+            <Panel title={t('reports.shrinkageSection')} icon={PackageX}>
+              <div className="metric-strip">
+                <Metric size="sm" label={t('reports.totalQuantityLost')} value={formatNumber(data.shrinkage.quantity)} tone={data.shrinkage.quantity ? 'danger' : undefined} />
+                <Metric size="sm" label={t('reports.totalValueLost')} value={formatRwf(data.shrinkage.value)} tone={data.shrinkage.value ? 'danger' : undefined} />
+              </div>
+              <DataTable caption={t('reports.shrinkageSection')} rowKey="cause" rows={data.shrinkage.by_cause}
+                empty={{ icon: PackageX, title: t('reports.noShrinkageInPeriod') }}
+                columns={[
+                  { key: 'cause', header: t('reports.cause'), mobile: 'title', render: (r) => t(`causes.${r.cause}`, { defaultValue: r.cause }) },
+                  { key: 'quantity', header: t('common.quantity'), align: 'right', render: (r) => formatNumber(r.quantity) },
+                  { key: 'value', header: t('reports.value'), align: 'right', mobile: 'value', render: (r) => formatRwf(r.value) },
+                ]} />
+            </Panel>
+          )}
         </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label htmlFor="to">{t('reports.to')}</label>
-          <input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-      </div>
-
-      {error && <div className="error-banner">{error}</div>}
-      {!canSales && !canShrinkage && !canFinancial && (
-        <p style={{ color: 'var(--ink-muted)' }}>{t('reports.noPermission')}</p>
-      )}
-
-      {!loading && canFinancial && financial && (
-        <>
-          <div className="section-title" style={{ marginTop: 0 }}>{t('reports.financialSummary')}</div>
-          <div className="unpaid-summary">
-            <StatTile label={t('reports.revenue')} value={financial.revenue.toLocaleString()} />
-            <StatTile label={t('reports.posRevenue')} value={financial.pos_revenue.toLocaleString()} />
-            <StatTile label={t('reports.institutionRevenue')} value={financial.institution_revenue.toLocaleString()} />
-            <StatTile label={t('reports.cogs')} value={financial.cogs.toLocaleString()} />
-            <StatTile label={t('reports.grossProfit')} value={financial.gross_profit.toLocaleString()} />
-            <StatTile label={t('reports.shrinkageValue')} value={financial.shrinkage_value.toLocaleString()} tone="bad" />
-            <StatTile
-              label={t('reports.netProfit')}
-              value={financial.net_profit.toLocaleString()}
-              tone={financial.net_profit < 0 ? 'bad' : undefined}
-            />
-            <StatTile label={t('reports.supplierPayablesOwed')} value={financial.supplier_payables_outstanding.toLocaleString()} tone="bad" />
-            <StatTile label={t('reports.institutionReceivablesDue')} value={financial.institution_receivables_outstanding.toLocaleString()} />
-          </div>
-        </>
-      )}
-
-      {!loading && canSales && salesSummary && (
-        <>
-          <div className="section-title">{t('reports.salesSection')}</div>
-          <div className="unpaid-summary">
-            <StatTile label={t('reports.salesCount')} value={salesSummary.sale_count} />
-            <StatTile label={t('reports.revenue')} value={salesSummary.revenue.toLocaleString()} />
-            <StatTile
-              label={t('reports.voidedSales')}
-              value={salesSummary.voided_count}
-              tone={salesSummary.voided_count > 0 ? 'bad' : undefined}
-            />
-          </div>
-
-          <table className="data-table" style={{ marginBottom: 28 }}>
-            <thead>
-              <tr>
-                <th>{t('reports.paymentMethod')}</th>
-                <th>{t('nav.sales')}</th>
-                <th>{t('reports.revenue')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {salesSummary.by_payment_method.map((r) => (
-                <tr key={r.payment_method}>
-                  <td>{t(`paymentMethods.${r.payment_method}`, { defaultValue: r.payment_method.replace('_', ' ') })}</td>
-                  <td className="num">{r.sale_count}</td>
-                  <td className="num">{r.revenue.toLocaleString()}</td>
-                </tr>
-              ))}
-              {salesSummary.by_payment_method.length === 0 && (
-                <tr>
-                  <td colSpan={3} style={{ color: 'var(--ink-muted)' }}>
-                    {t('reports.noSalesInPeriod')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          <div className="section-title">{t('reports.topProducts')}</div>
-          <table className="data-table" style={{ marginBottom: 28 }}>
-            <thead>
-              <tr>
-                <th>{t('common.product')}</th>
-                <th>{t('products.sku')}</th>
-                <th>{t('reports.qtySold')}</th>
-                <th>{t('reports.revenue')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topProducts.map((p) => (
-                <tr key={p.product_id}>
-                  <td>{p.name}</td>
-                  <td>{p.sku}</td>
-                  <td className="num">{p.quantity_sold}</td>
-                  <td className="num">{p.revenue.toLocaleString()}</td>
-                </tr>
-              ))}
-              {topProducts.length === 0 && (
-                <tr>
-                  <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
-                    {t('reports.noSalesInPeriod')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </>
-      )}
-
-      {!loading && canShrinkage && shrinkage && (
-        <>
-          <div className="section-title">{t('reports.shrinkageSection')}</div>
-          <div className="unpaid-summary">
-            <StatTile label={t('reports.totalQuantityLost')} value={shrinkage.quantity} tone="bad" />
-            <StatTile label={t('reports.totalValueLost')} value={shrinkage.value.toLocaleString()} tone="bad" />
-          </div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>{t('reports.cause')}</th>
-                <th>{t('common.quantity')}</th>
-                <th>{t('reports.value')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shrinkage.by_cause.map((r) => (
-                <tr key={r.cause}>
-                  <td>{t(`causes.${r.cause}`, { defaultValue: r.cause })}</td>
-                  <td className="num">{r.quantity}</td>
-                  <td className="num">{r.value.toLocaleString()}</td>
-                </tr>
-              ))}
-              {shrinkage.by_cause.length === 0 && (
-                <tr>
-                  <td colSpan={3} style={{ color: 'var(--ink-muted)' }}>
-                    {t('reports.noShrinkageInPeriod')}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </>
       )}
     </div>
   );

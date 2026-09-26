@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ImagePlus } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { getProductIcon } from '../utils/productIcon';
+import Dialog from '../ui/Dialog';
+import Button from '../ui/Button';
+import { Field, Input, Select } from '../ui/Field';
+import { ErrorState } from '../ui/display';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
 const UNITS = ['pcs', 'kg', 'litre', 'box', 'pack'];
 
 export default function ProductFormModal({ product, onClose, onSaved }) {
@@ -29,42 +33,33 @@ export default function ProductFormModal({ product, onClose, onSaved }) {
   });
   const [initialQuantity, setInitialQuantity] = useState('');
   const [initialLocationId, setInitialLocationId] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
+  const [imageError, setImageError] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    client.get('/categories').then(({ data }) => setCategories(data));
+    client.get('/categories').then(({ data }) => setCategories(data)).catch(() => {});
     if (!isEdit && canRecordStock) {
       client.get('/stock/locations').then(({ data }) => {
         setLocations(data);
         const frontShelf = data.find((l) => l.name === 'front_shelf');
         if (frontShelf) setInitialLocationId(String(frontShelf.id));
-      });
+      }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
-  }
+  const update = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
   async function handleFileSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow picking the same file again later
     if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      setError(t('products.imageFileTypeError'));
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setError(t('products.imageFileSizeError'));
-      return;
-    }
-
-    setError('');
+    if (!file.type.startsWith('image/')) return setImageError(t('products.imageFileTypeError'));
+    if (file.size > MAX_IMAGE_BYTES) return setImageError(t('products.imageFileSizeError'));
+    setImageError('');
     setUploading(true);
     try {
       const body = new FormData();
@@ -72,15 +67,14 @@ export default function ProductFormModal({ product, onClose, onSaved }) {
       const { data } = await client.post('/uploads/product-image', body);
       update('image_url', data.url);
     } catch (err) {
-      setError(err.message);
+      setImageError(err.message);
     } finally {
       setUploading(false);
     }
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError('');
+  async function handleSubmit() {
+    setError(null);
     setLoading(true);
     try {
       const payload = {
@@ -98,7 +92,6 @@ export default function ProductFormModal({ product, onClose, onSaved }) {
         onSaved(data);
       } else {
         const { data } = await client.post('/products', { ...payload, sku: form.sku });
-
         if (canRecordStock && Number(initialQuantity) > 0 && initialLocationId) {
           await client.post('/stock/intake', {
             product_id: data.id,
@@ -107,168 +100,98 @@ export default function ProductFormModal({ product, onClose, onSaved }) {
             notes: 'Initial stock on product setup',
           });
         }
-
         onSaved(data);
       }
     } catch (err) {
-      setError(err.message);
-    } finally {
+      setError(err);
       setLoading(false);
     }
   }
 
   return (
-    <div className="modal-overlay">
-      <form className="modal-card" onSubmit={handleSubmit}>
-        <h2>{isEdit ? t('products.editProduct') : t('products.newProductTitle')}</h2>
-        {error && <div className="error-banner">{error}</div>}
+    <Dialog
+      title={isEdit ? t('products.editProduct') : t('products.newProductTitle')}
+      size="lg"
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={(
+        <>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" variant="primary" loading={loading} loadingText={t('common.saving')}>
+            {isEdit ? t('products.saveChanges') : t('products.addProduct')}
+          </Button>
+        </>
+      )}
+    >
+      {error && <ErrorState error={error} action={t('errors.actions.product')} />}
 
-        <div className="field">
-          <label htmlFor="sku">{t('products.sku')}</label>
-          <input
-            id="sku"
-            value={form.sku}
-            onChange={(e) => update('sku', e.target.value)}
-            required
-            disabled={isEdit}
-            autoFocus={!isEdit}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="name">{t('common.name')}</label>
-          <input id="name" value={form.name} onChange={(e) => update('name', e.target.value)} required autoFocus={isEdit} />
-        </div>
-        <div className="field">
-          <label htmlFor="image_url">{t('products.imageUrl')}</label>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-            <span className="product-tile-image" style={{ width: 48, aspectRatio: '1 / 1', flexShrink: 0 }}>
-              {form.image_url ? (
-                <img src={form.image_url} alt="" onError={(e) => { e.target.style.display = 'none'; }} />
-              ) : (
-                <span className="product-tile-icon" style={{ fontSize: 22 }} aria-hidden="true">
-                  {getProductIcon(form.name)}
-                </span>
-              )}
-            </span>
-            <input
-              id="image_url"
-              style={{ flex: 1 }}
-              value={form.image_url}
-              onChange={(e) => update('image_url', e.target.value)}
-              placeholder={t('products.imageUrlPlaceholder')}
-            />
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileSelected}
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            className="btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-          >
-            {uploading ? t('products.uploadingPhoto') : t('products.uploadPhoto')}
-          </button>
-        </div>
-        <div className="field">
-          <label htmlFor="category">{t('products.category')}</label>
-          <select id="category" value={form.category_id} onChange={(e) => update('category_id', e.target.value)}>
+      <div className="form-section-title">{t('products.sectionDetails')}</div>
+      <div className="form-row">
+        <Field label={t('products.sku')} required hint={isEdit ? t('products.skuLocked') : undefined}>
+          <Input value={form.sku} onChange={(e) => update('sku', e.target.value)} required disabled={isEdit} autoFocus={!isEdit} />
+        </Field>
+        <Field label={t('common.name')} required>
+          <Input value={form.name} onChange={(e) => update('name', e.target.value)} required autoFocus={isEdit} />
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label={t('products.category')}>
+          <Select value={form.category_id} onChange={(e) => update('category_id', e.target.value)}>
             <option value="">{t('products.noCategory')}</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="unit">{t('products.unit')}</label>
-          <select id="unit" value={form.unit} onChange={(e) => update('unit', e.target.value)}>
-            {UNITS.map((u) => (
-              <option key={u} value={u}>
-                {t(`products.units.${u}`)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <div className="field" style={{ flex: 1 }}>
-            <label htmlFor="cost_price">{t('products.costPrice')}</label>
-            <input
-              id="cost_price"
-              type="number"
-              min="0"
-              value={form.cost_price}
-              onChange={(e) => update('cost_price', e.target.value)}
-            />
-          </div>
-          <div className="field" style={{ flex: 1 }}>
-            <label htmlFor="selling_price">{t('products.sellingPrice')}</label>
-            <input
-              id="selling_price"
-              type="number"
-              min="0"
-              value={form.selling_price}
-              onChange={(e) => update('selling_price', e.target.value)}
-              disabled={!canSetPrice}
-              title={!canSetPrice ? t('products.sellingPriceLocked') : undefined}
-            />
-          </div>
-        </div>
-        <div className="field">
-          <label htmlFor="reorder_level">{t('products.reorderLevel')}</label>
-          <input
-            id="reorder_level"
-            type="number"
-            min="0"
-            value={form.reorder_level}
-            onChange={(e) => update('reorder_level', e.target.value)}
-          />
-        </div>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </Field>
+        <Field label={t('products.unit')}>
+          <Select value={form.unit} onChange={(e) => update('unit', e.target.value)}>
+            {UNITS.map((u) => <option key={u} value={u}>{t(`products.units.${u}`)}</option>)}
+          </Select>
+        </Field>
+      </div>
 
-        {!isEdit && canRecordStock && (
-          <>
-            <div className="section-title" style={{ marginTop: 6 }}>{t('products.initialStock')}</div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <div className="field" style={{ flex: 1 }}>
-                <label htmlFor="initial_quantity">{t('products.quantityOnHand')}</label>
-                <input
-                  id="initial_quantity"
-                  type="number"
-                  min="0"
-                  value={initialQuantity}
-                  onChange={(e) => setInitialQuantity(e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-              <div className="field" style={{ flex: 1 }}>
-                <label htmlFor="initial_location">{t('common.location')}</label>
-                <select id="initial_location" value={initialLocationId} onChange={(e) => setInitialLocationId(e.target.value)}>
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {t(`locations.${l.name}`, { defaultValue: l.name.replace('_', ' ') })}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <p className="hint" style={{ margin: '0 0 14px' }}>{t('products.initialStockHint')}</p>
-          </>
-        )}
+      <div className="form-section-title">{t('products.sectionPricing')}</div>
+      <div className="form-row">
+        <Field label={t('products.costPriceRwf')}>
+          <Input type="number" inputMode="numeric" min="0" value={form.cost_price} onChange={(e) => update('cost_price', e.target.value)} />
+        </Field>
+        <Field label={t('products.sellingPriceRwf')} hint={!canSetPrice ? t('products.sellingPriceLocked') : undefined}>
+          <Input type="number" inputMode="numeric" min="0" value={form.selling_price} onChange={(e) => update('selling_price', e.target.value)} disabled={!canSetPrice} />
+        </Field>
+        <Field label={t('products.reorderLevel')} hint={t('products.reorderHint')}>
+          <Input type="number" inputMode="numeric" min="0" value={form.reorder_level} onChange={(e) => update('reorder_level', e.target.value)} />
+        </Field>
+      </div>
 
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            {t('common.cancel')}
-          </button>
-          <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
-            {loading ? t('common.saving') : isEdit ? t('products.saveChanges') : t('products.addProduct')}
-          </button>
+      <div className="form-section-title">{t('products.sectionPhoto')}</div>
+      <div className="photo-field">
+        <span className="product-thumb product-thumb-lg" aria-hidden="true">
+          {form.image_url ? <img src={form.image_url} alt="" onError={(e) => { e.currentTarget.hidden = true; }} /> : getProductIcon(form.name)}
+        </span>
+        <div className="photo-field-inputs">
+          <Field label={t('products.imageUrl')} error={imageError || undefined}>
+            <Input value={form.image_url} onChange={(e) => update('image_url', e.target.value)} placeholder={t('products.imageUrlPlaceholder')} />
+          </Field>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelected} hidden />
+          <Button icon={ImagePlus} onClick={() => fileInputRef.current?.click()} loading={uploading} loadingText={t('products.uploadingPhoto')}>
+            {t('products.uploadPhoto')}
+          </Button>
         </div>
-      </form>
-    </div>
+      </div>
+
+      {!isEdit && canRecordStock && (
+        <>
+          <div className="form-section-title">{t('products.initialStock')}</div>
+          <div className="form-row">
+            <Field label={t('products.quantityOnHand')} hint={t('products.initialStockHint')}>
+              <Input type="number" inputMode="numeric" min="0" value={initialQuantity} onChange={(e) => setInitialQuantity(e.target.value)} placeholder="0" />
+            </Field>
+            <Field label={t('common.location')}>
+              <Select value={initialLocationId} onChange={(e) => setInitialLocationId(e.target.value)}>
+                {locations.map((l) => <option key={l.id} value={l.id}>{t(`locations.${l.name}`, { defaultValue: l.name.replace('_', ' ') })}</option>)}
+              </Select>
+            </Field>
+          </div>
+        </>
+      )}
+    </Dialog>
   );
 }

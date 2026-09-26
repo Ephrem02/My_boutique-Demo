@@ -20,7 +20,7 @@ const LINKS = {
   supplier_delivery: { path: '/suppliers', permission: 'suppliers.view' },
   institution_order: { path: '/institutions', permission: 'institutions.view' },
   user: { path: '/employees', permission: 'employees.manage' },
-  notification_delivery: { path: '/admin/notifications?tab=deliveries', permission: 'notifications.deliveries.manage' },
+  notification_delivery: { path: '/admin/deliveries', permission: 'notifications.deliveries.manage' },
 };
 
 export function linkFor(notification, hasPermission) {

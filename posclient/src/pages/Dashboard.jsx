@@ -1,194 +1,295 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import {
+  AlertTriangle, ArrowDownRight, ArrowUpRight, Bell, CalendarPlus, CheckCircle2, ClipboardCheck, Clock, FileWarning,
+  PackageX, Play, ShoppingCart, TrendingUp, Boxes,
+} from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useBusinessDay } from '../context/BusinessDayContext';
 import { useNotifications } from '../context/NotificationContext';
-import DayBoard from '../components/businessDay/DayBoard';
-import { OpenDayDialog, ClosingWizard, ReasonDialog, CorrectionDialog } from '../components/businessDay/Dialogs';
-import { rwf, formatDate } from '../components/businessDay/format';
+import { OpenDayDialog, ClosingWizard, ReasonDialog, CorrectionDialog, METHODS } from '../components/businessDay/Dialogs';
+import ClosingReport, { PeopleList, HealthBadge, DAY_STATUS_TONE } from '../components/businessDay/ClosingReport';
+import { PageHeader, Panel, Metric, StatusBadge, EmptyState, SkeletonPanel, ErrorState, DescriptionList } from '../ui/display';
+import Button from '../ui/Button';
+import { useToast } from '../ui/Toast';
+import { formatRwf, formatDate, formatTime, formatPercentChange, formatNumber } from '../ui/format';
 
-const REFRESH_MS = 60 * 1000;
+/** "Needs attention" - only things that exist, most severe first. */
+function attentionItems({ data, t, hasPermission, unread }) {
+  const items = [];
+  const { today, last } = data;
+  const schedule = today?.closing_schedule;
+  if (schedule?.state === 'overdue_critical') items.push({ tone: 'danger', icon: Clock, text: t('dashboard.attention.overdue', { time: schedule.expected_closing_time }), to: '/' });
+  if (last?.closing?.variance_band === 'critical') {
+    items.push({ tone: 'danger', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: formatDate(last.day.business_date) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
+  }
+  for (const d of data.awaiting_review || []) {
+    items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.awaitingReview', { date: formatDate(d.business_date) }), to: `/business-days/${d.id}` });
+  }
+  if (last?.day.recount_requested_at && hasPermission('day.close')) items.push({ tone: 'warning', icon: ClipboardCheck, text: t('dashboard.attention.recount', { date: formatDate(last.day.business_date) }) });
+  if (last?.closing?.variance_band === 'attention') {
+    items.push({ tone: 'warning', icon: AlertTriangle, text: t('dashboard.attention.variance', { amount: formatRwf(last.corrected?.variance ?? last.closing.variance, { signed: true }), date: formatDate(last.day.business_date) }), to: hasPermission('day.history.view') ? `/business-days/${last.day.id}` : undefined });
+  }
+  if (schedule?.state === 'due') items.push({ tone: 'warning', icon: Clock, text: t('dashboard.attention.due', { time: schedule.expected_closing_time }) });
+  const inventory = (today || last)?.figures.inventory;
+  if (inventory?.out_of_stock_count) items.push({ tone: 'danger', icon: PackageX, text: t('dashboard.attention.outOfStock', { count: inventory.out_of_stock_count }), to: hasPermission('stock.view') ? '/stock' : undefined });
+  if (inventory?.low_stock_count) items.push({ tone: 'warning', icon: Boxes, text: t('dashboard.attention.lowStock', { count: inventory.low_stock_count }), to: hasPermission('products.view') ? '/products?filter=low' : undefined });
+  if (today?.alerts?.pending_corrections) items.push({ tone: 'warning', icon: FileWarning, text: t('dashboard.attention.corrections', { count: today.alerts.pending_corrections }), to: '/closing/corrections' });
+  if (unread) items.push({ tone: 'info', icon: Bell, text: t('dashboard.attention.unread', { count: unread }), to: '/notifications' });
+  return items;
+}
 
-function Comparison({ comparison, t }) {
-  if (!comparison) return null;
-  const { same_time: same, last_full_day: full } = comparison;
-  const pct = (a, b) => (b ? `${a >= b ? '+' : ''}${Math.round(((a - b) / b) * 100)}%` : '—');
+function AttentionPanel({ items }) {
+  const { t } = useTranslation();
   return (
-    <section className="comparison-card">
-      <div className="board-section-title">{t('businessDay.compare.title')}</div>
-      <table className="data-table compact">
-        <thead>
-          <tr>
-            <th></th>
-            <th>{t('businessDay.compare.today', { time: same.slot })}</th>
-            <th>{t('businessDay.compare.lastSameTime', { time: same.slot })}</th>
-            <th>{t('businessDay.compare.change')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>{t('businessDay.fig.totalSales')}</td>
-            <td className="num">{rwf(same.today.sales)}</td>
-            <td className="num">{rwf(same.last.sales)}</td>
-            <td className="num">{pct(same.today.sales, same.last.sales)}</td>
-          </tr>
-          <tr>
-            <td>{t('businessDay.fig.transactions')}</td>
-            <td className="num">{same.today.transactions}</td>
-            <td className="num">{same.last.transactions}</td>
-            <td className="num">{pct(same.today.transactions, same.last.transactions)}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p className="hint" style={{ marginTop: 8 }}>
-        {t('businessDay.compare.fullDay', { sales: rwf(full.sales), transactions: full.transactions })}
-      </p>
-    </section>
+    <Panel title={t('dashboard.attentionTitle')} icon={AlertTriangle} className="attention-panel">
+      {items.length === 0 ? (
+        <div className="all-clear"><CheckCircle2 aria-hidden="true" />{t('dashboard.allClear')}</div>
+      ) : (
+        <ul className="attention-list">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const content = (
+              <>
+                <span className={`attention-icon tone-${item.tone}`}><Icon aria-hidden="true" /></span>
+                <span className="attention-text">{item.text}</span>
+                <span className="sr-only">({t(`dashboard.tone.${item.tone}`)})</span>
+              </>
+            );
+            return <li key={item.text}>{item.to ? <Link to={item.to} className="attention-item">{content}</Link> : <div className="attention-item">{content}</div>}</li>;
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+function StockAlerts({ figures }) {
+  const { t } = useTranslation();
+  const list = [...figures.inventory.out_of_stock, ...figures.inventory.low_stock].slice(0, 6);
+  return (
+    <Panel className="stock-panel" title={t('dashboard.stockAlerts')} icon={Boxes} actions={<Button size="sm" variant="ghost" to="/stock">{t('dashboard.viewStock')}</Button>}>
+      {list.length === 0 ? (
+        <div className="all-clear"><CheckCircle2 aria-hidden="true" />{t('dashboard.stockOk')}</div>
+      ) : (
+        <ul className="stock-alert-list">
+          {list.map((p) => (
+            <li key={p.id}>
+              <span className="stock-alert-name">{p.name}<span className="text-muted"> · {p.sku}</span></span>
+              <StatusBadge tone={p.total === 0 ? 'danger' : 'warning'}>
+                {p.total === 0 ? t('dashboard.out') : t('dashboard.left', { count: p.total })}
+              </StatusBadge>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+/** Today's live sales: one headline, supporting payment detail. */
+function TodaySales({ today, comparison }) {
+  const { t } = useTranslation();
+  const f = today.figures;
+  const same = comparison?.same_time;
+  const change = same ? formatPercentChange(same.today.sales, same.last.sales) : null;
+  const up = same && same.today.sales >= same.last.sales;
+  return (
+    <Panel className="today-sales" title={t('dashboard.todaySales')} icon={TrendingUp}
+      actions={<StatusBadge tone="success">{t('dashboard.live')}</StatusBadge>}>
+      <Metric size="xl" label={<span className="sr-only">{t('dashboard.todaySales')}</span>} value={formatRwf(f.sales.gross)}
+        hint={t('businessDay.transactionsCount', { count: f.sales.transactions })} />
+      {change && (
+        <p className={`trend ${up ? 'trend-up' : 'trend-down'}`}>
+          {up ? <ArrowUpRight aria-hidden="true" /> : <ArrowDownRight aria-hidden="true" />}
+          <span className="num">{change}</span>
+          <span className="text-secondary">{t('dashboard.vsSameTime', { time: same.slot })}</span>
+        </p>
+      )}
+      <div className="method-strip">
+        {METHODS.map((m) => (
+          <Metric key={m} size="sm" label={t(`paymentMethods.${m}`)} value={formatRwf(f.payment_methods[m])} />
+        ))}
+      </div>
+      <DescriptionList className="today-extra" items={[
+        { label: t('businessDay.fig.refunds'), value: formatRwf(-f.sales.refunds) },
+        { label: t('businessDay.fig.voids'), value: formatNumber(f.sales.void_count) },
+        { label: t('businessDay.fig.netSales'), value: formatRwf(f.sales.net), strong: true },
+        { label: t('businessDay.fig.expectedCash'), value: formatRwf(f.cash.expected_cash) },
+      ]} />
+      {comparison && (
+        <p className="field-hint comparison-note">
+          {t('dashboard.fullDayNote', { sales: formatRwf(comparison.last_full_day.sales), count: comparison.last_full_day.transactions })}
+        </p>
+      )}
+    </Panel>
   );
 }
 
 export default function Dashboard() {
   const { t } = useTranslation();
   const { hasPermission, user } = useAuth();
-  const { version } = useNotifications();
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
+  const { unread } = useNotifications();
+  const { data, error, refresh } = useBusinessDay();
+  const toast = useToast();
   const [dialog, setDialog] = useState(null);
 
-  const load = useCallback(async () => {
-    try {
-      setData((await client.get('/business-days/dashboard')).data);
-      setError('');
-    } catch (err) {
-      setError(err.message);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [load, version]);
-
-  const done = () => {
+  const done = (message) => {
     setDialog(null);
-    load();
+    refresh();
+    if (message) toast.success(message);
   };
 
-  async function startClosing() {
-    try {
-      await client.post('/business-days/current/closing/start');
-      await load();
-      setDialog('close');
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
+  if (error && !data) return <div className="page"><ErrorState error={error} onRetry={refresh} /></div>;
   if (!data) {
-    return <div className="page-body">{error ? <div className="error-banner">{error}</div> : <p style={{ color: 'var(--ink-muted)' }}>{t('common.loading')}</p>}</div>;
+    return (
+      <div className="page" aria-busy="true">
+        <PageHeader title={t('dashboard.title')} />
+        <div className="dashboard-grid"><SkeletonPanel lines={6} /><SkeletonPanel lines={4} /></div>
+      </div>
+    );
   }
 
   const { today, last } = data;
   const canOpen = hasPermission('day.open');
   const canClose = hasPermission('day.close');
   const canReview = hasPermission('day.review');
-  const canReopen = hasPermission('day.reopen');
   const canCorrect = hasPermission('day.corrections.request');
-  const lastSubmitter = last?.people.submitted_by?.id;
+  const isKeeper = user?.role === 'store_keeper';
+  const status = today ? today.day.status : 'none';
   const schedule = today?.closing_schedule;
+  const items = attentionItems({ data, t, hasPermission, unread });
+
+  async function startClosing() {
+    await client.post('/business-days/current/closing/start');
+    await refresh();
+    setDialog('close');
+  }
+
+  const lastActions = last && (
+    <>
+      {canReview && last.day.status === 'closing_submitted' && !last.day.recount_requested_at && last.people.submitted_by?.id !== user.id && (
+        <>
+          <Button variant="primary" onClick={() => setDialog('accept')}>{t('businessDay.review.accept')}</Button>
+          <Button onClick={() => setDialog('recount')}>{t('businessDay.review.recount')}</Button>
+        </>
+      )}
+      {canReview && last.day.status === 'closing_submitted' && last.people.submitted_by?.id === user.id && (
+        <p className="field-hint">{t('businessDay.review.ownClosing')}</p>
+      )}
+      {canClose && last.day.recount_requested_at && <Button variant="primary" onClick={() => setDialog('close')}>{t('businessDay.close.recountTitle')}</Button>}
+      {canCorrect && ['closing_submitted', 'closed', 'closed_with_adjustment'].includes(last.day.status) && (
+        <Button onClick={() => setDialog('correction')}>{t('businessDay.correction.request')}</Button>
+      )}
+      {hasPermission('day.reopen') && !today && ['closed', 'closed_with_adjustment'].includes(last.day.status) && (
+        <Button variant="danger" onClick={() => setDialog('reopen')}>{t('businessDay.reopen.button')}</Button>
+      )}
+      {hasPermission('day.history.view') && <Button variant="ghost" to={`/business-days/${last.day.id}`}>{t('dashboard.fullHistory')}</Button>}
+    </>
+  );
 
   return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{t('businessDay.dashboard')}</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {(canCorrect || canReview) && <Link className="btn" to="/closing/corrections">{t('businessDay.corrections')}</Link>}
-          {hasPermission('day.history.view') && <Link className="btn" to="/business-days">{t('businessDay.history')}</Link>}
-          {hasPermission('sales.create') && <Link className="btn btn-primary" to="/pos">{t('businessDay.goToTill')}</Link>}
-        </div>
-      </div>
-      {error && <div className="error-banner">{error}</div>}
+    <div className="page dashboard">
+      <PageHeader
+        title={t('dashboard.greeting', { name: user?.full_name?.split(' ')[0] })}
+        subtitle={formatDate(data.shop_date, { weekday: true })}
+        actions={(
+          <>
+            {hasPermission('sales.create') && <Button variant="primary" icon={ShoppingCart} to="/pos">{t('dashboard.goToTill')}</Button>}
+            {hasPermission('day.history.view') && <Button to="/business-days">{t('businessDay.history')}</Button>}
+          </>
+        )}
+      />
 
-      {canReview && data.awaiting_review.length > 0 && (
-        <div className="warn-banner">
-          {t('businessDay.awaitingReview', { dates: data.awaiting_review.map((d) => formatDate(d.business_date)).join(', ') })}
-        </div>
-      )}
-      {schedule && schedule.state !== 'not_due' && today.day.status === 'open' && (
-        <div className={schedule.state === 'overdue_critical' ? 'error-banner' : 'warn-banner'}>
-          {t(`businessDay.schedule.${schedule.state}`, { time: schedule.expected_closing_time })}
-        </div>
-      )}
-
-      <div className="boards">
-        {last ? (
-          <DayBoard board={last} title={t('businessDay.lastDay')}>
-            {canReview && last.day.status === 'closing_submitted' && !last.day.recount_requested_at && lastSubmitter !== user.id && (
+      {/* 1. Business day status */}
+      <section className={`day-strip day-strip-${status}`} aria-label={t('dashboard.dayStatus')}>
+        <div className="day-strip-main">
+          <StatusBadge tone={DAY_STATUS_TONE[status] || 'neutral'}>{t(`shell.day.${status}`)}</StatusBadge>
+          <div className="day-strip-text">
+            {today ? (
               <>
-                <button className="btn btn-primary" onClick={() => setDialog('accept')}>{t('businessDay.review.accept')}</button>
-                <button className="btn" onClick={() => setDialog('recount')}>{t('businessDay.review.recount')}</button>
+                <strong>{t('dashboard.todayOpened', { date: formatDate(today.day.business_date, { weekday: true }) })}</strong>
+                <span className="text-secondary">
+                  {t('dashboard.openedBy', { name: today.people.opened_by?.name || '—', time: formatTime(today.day.opened_at) })}
+                  {today.people.closing_requested_by && ` · ${t('dashboard.closingRequestedBy', { name: today.people.closing_requested_by.name, time: formatTime(today.people.closing_requested_by.at) })}`}
+                </span>
+                {schedule && <span className="text-secondary">{t(`dashboard.schedule.${schedule.state}`, { time: schedule.expected_closing_time })}</span>}
+              </>
+            ) : (
+              <>
+                <strong>{t('businessDay.noOpenDay')}</strong>
+                <span className="text-secondary">{canOpen ? t('businessDay.noOpenDayHintCan') : t('businessDay.noOpenDayHint')}</span>
               </>
             )}
-            {canReview && last.day.status === 'closing_submitted' && lastSubmitter === user.id && (
-              <p className="hint">{t('businessDay.review.ownClosing')}</p>
-            )}
-            {canClose && last.day.recount_requested_at && <button className="btn btn-primary" onClick={() => setDialog('close')}>{t('businessDay.close.recountTitle')}</button>}
-            {canCorrect && ['closing_submitted', 'closed', 'closed_with_adjustment'].includes(last.day.status) && (
-              <button className="btn" onClick={() => setDialog('correction')}>{t('businessDay.correction.request')}</button>
-            )}
-            {canReopen && !today && ['closed', 'closed_with_adjustment'].includes(last.day.status) && (
-              <button className="btn btn-danger" onClick={() => setDialog('reopen')}>{t('businessDay.reopen.button')}</button>
-            )}
-            {last.pending_corrections > 0 && <span className="hint">{t('businessDay.pendingCorrections', { count: last.pending_corrections })}</span>}
-          </DayBoard>
-        ) : (
-          <section className="day-board empty"><div className="day-board-title">{t('businessDay.lastDay')}</div><p className="hint">{t('businessDay.noClosingYet')}</p></section>
-        )}
+          </div>
+        </div>
+        <div className="day-strip-actions">
+          {!today && canOpen && <Button variant="primary" icon={CalendarPlus} onClick={() => setDialog('open')}>{t('businessDay.open.button')}</Button>}
+          {today?.day.status === 'open' && canClose && <Button variant={schedule?.state === 'not_due' ? 'secondary' : 'primary'} icon={Play} onClick={startClosing}>{t('businessDay.close.start')}</Button>}
+          {today?.day.status === 'closing_in_progress' && canClose && <Button variant="primary" onClick={() => setDialog('close')}>{t('businessDay.close.continue')}</Button>}
+          {today && <HealthBadge health={today.health} />}
+        </div>
+      </section>
 
-        {today ? (
-          <DayBoard board={today} title={t('businessDay.today')}>
-            {canClose && today.day.status === 'open' && (
-              <button className="btn btn-primary" onClick={startClosing}>{t('businessDay.close.start')}</button>
-            )}
-            {canClose && today.day.status === 'closing_in_progress' && (
-              <button className="btn btn-primary" onClick={() => setDialog('close')}>{t('businessDay.close.continue')}</button>
-            )}
-          </DayBoard>
-        ) : (
-          <section className="day-board empty">
-            <div className="day-board-title">{t('businessDay.today')}</div>
-            <p><strong>{t('businessDay.noOpenDay')}</strong></p>
-            <p className="hint">{canOpen ? t('businessDay.noOpenDayHintCan') : t('businessDay.noOpenDayHint')}</p>
-            {canOpen && <button className="btn btn-primary" onClick={() => setDialog('open')}>{t('businessDay.open.button')}</button>}
-          </section>
-        )}
+      <div className="dashboard-grid">
+        <div className="dashboard-main">
+          {isKeeper && today && <StockAlerts figures={today.figures} />}
+          {today ? (
+            <TodaySales today={today} comparison={data.comparison} />
+          ) : (
+            <Panel>
+              <EmptyState icon={CalendarPlus} title={t('dashboard.noSalesYet')} description={canOpen ? t('businessDay.noOpenDayHintCan') : t('businessDay.noOpenDayHint')}
+                action={canOpen ? <Button variant="primary" onClick={() => setDialog('open')}>{t('businessDay.open.button')}</Button> : null} />
+            </Panel>
+          )}
+          {last ? (
+            <ClosingReport board={last} title={t('businessDay.lastDay')} actions={lastActions} />
+          ) : (
+            <Panel><EmptyState compact icon={ClipboardCheck} title={t('businessDay.noClosingYet')} description={t('dashboard.noClosingHint')} /></Panel>
+          )}
+        </div>
+
+        <aside className="dashboard-side" aria-label={t('dashboard.sideSummary')}>
+          <AttentionPanel items={items} />
+          {today && (
+            <Panel title={t('dashboard.onDuty')} icon={Clock}>
+              <PeopleList people={today.people} closed={false} />
+            </Panel>
+          )}
+          {!isKeeper && today && <StockAlerts figures={today.figures} />}
+          {today?.figures.per_cashier?.length > 0 && (
+            <Panel title={t('businessDay.perCashier')}>
+              <DescriptionList items={today.figures.per_cashier.map((c) => ({
+                label: `${c.name} · ${t('businessDay.transactionsCount', { count: c.transactions })}`, value: formatRwf(c.sales),
+              }))} />
+            </Panel>
+          )}
+        </aside>
       </div>
-
-      <Comparison comparison={data.comparison} t={t} />
 
       {dialog === 'open' && (
         <OpenDayDialog previousCounted={last ? (last.corrected ? last.corrected.values.counted_cash.corrected : last.closing.counted_cash) : null}
-          onClose={() => setDialog(null)} onDone={done} />
+          onClose={() => setDialog(null)} onDone={() => done(t('dashboard.toast.opened'))} />
       )}
-      {dialog === 'close' && <ClosingWizard onClose={() => { setDialog(null); load(); }} onDone={done} />}
+      {dialog === 'close' && <ClosingWizard onClose={() => { setDialog(null); refresh(); }} onDone={() => done()} />}
       {dialog === 'accept' && (
-        <ReasonDialog title={t('businessDay.review.acceptTitle')} hint={t('businessDay.review.acceptHint')} label={t('businessDay.review.note')}
+        <ReasonDialog title={t('businessDay.review.acceptTitle')} description={t('businessDay.review.acceptHint')} label={t('businessDay.review.note')}
           required={false} confirmLabel={t('businessDay.review.accept')} onClose={() => setDialog(null)}
-          onSubmit={async (note) => { await client.post(`/business-days/${last.day.id}/accept`, { note }); done(); }} />
+          onSubmit={async (note) => { await client.post(`/business-days/${last.day.id}/accept`, { note }); done(t('dashboard.toast.accepted')); }} />
       )}
       {dialog === 'recount' && (
         <ReasonDialog title={t('businessDay.review.recountTitle')} label={t('businessDay.review.reason')} minLength={3}
           confirmLabel={t('businessDay.review.recount')} onClose={() => setDialog(null)}
-          onSubmit={async (reason) => { await client.post(`/business-days/${last.day.id}/recount`, { reason }); done(); }} />
+          onSubmit={async (reason) => { await client.post(`/business-days/${last.day.id}/recount`, { reason }); done(t('dashboard.toast.recount')); }} />
       )}
       {dialog === 'reopen' && (
-        <ReasonDialog title={t('businessDay.reopen.title')} hint={t('businessDay.reopen.hint')} label={t('businessDay.review.reason')} minLength={10}
+        <ReasonDialog title={t('businessDay.reopen.title')} description={t('businessDay.reopen.hint')} label={t('businessDay.review.reason')} minLength={10}
           danger confirmLabel={t('businessDay.reopen.button')} onClose={() => setDialog(null)}
-          onSubmit={async (reason) => { await client.post(`/business-days/${last.day.id}/reopen`, { reason }); done(); }} />
+          onSubmit={async (reason) => { await client.post(`/business-days/${last.day.id}/reopen`, { reason }); done(t('dashboard.toast.reopened')); }} />
       )}
-      {dialog === 'correction' && <CorrectionDialog board={last} onClose={() => setDialog(null)} onDone={done} />}
+      {dialog === 'correction' && <CorrectionDialog board={last} onClose={() => setDialog(null)} onDone={() => done(t('dashboard.toast.correction'))} />}
     </div>
   );
 }

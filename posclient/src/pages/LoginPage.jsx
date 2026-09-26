@@ -1,69 +1,67 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { LogIn, Store } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import Button from '../ui/Button';
+import { Field, Input } from '../ui/Field';
+import { Alert } from '../ui/display';
+import { describeError } from '../ui/errors';
 
 export default function LoginPage() {
   const { t } = useTranslation();
-  const { login } = useAuth();
+  const { login, user, loading: sessionLoading } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  if (!sessionLoading && user) return <Navigate to="/" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+    setError(null);
     setLoading(true);
     try {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      setError(err.message);
-    } finally {
+      setError(err);
       setLoading(false);
     }
   }
 
+  // Wrong credentials come back as a 401 with the API's own safe message
+  const info = error && (error.status === 401
+    ? { title: t('login.failedTitle'), message: t('login.failedMessage') }
+    : describeError(error, t, { action: t('errors.actions.signIn') }));
+
   return (
-    <div className="login-screen">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+    <main className="login-screen">
+      <div className="login-panel">
+        <div className="login-top">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true"><Store /></span>
+            <span className="brand-name">{t('login.title')}</span>
+          </div>
           <LanguageSwitcher />
         </div>
-        <h1>{t('login.title')}</h1>
-        <p>{t('login.subtitle')}</p>
-
-        {error && <div className="error-banner">{error}</div>}
-
-        <div className="field">
-          <label htmlFor="email">{t('login.email')}</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoFocus
-            required
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="password">{t('login.password')}</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-
-        <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
-          {loading ? t('login.signingIn') : t('login.signIn')}
-        </button>
-      </form>
-    </div>
+        <form className="login-card" onSubmit={handleSubmit}>
+          <h1>{t('login.heading')}</h1>
+          <p className="page-subtitle">{t('login.subtitle')}</p>
+          {info && <Alert tone="danger" title={info.title}>{info.message}</Alert>}
+          <Field label={t('login.email')} required>
+            <Input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
+          </Field>
+          <Field label={t('login.password')} required>
+            <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </Field>
+          <Button type="submit" variant="primary" size="lg" block icon={LogIn} loading={loading} loadingText={t('login.signingIn')}>{t('login.signIn')}</Button>
+        </form>
+        <p className="login-footnote">{t('login.footnote')}</p>
+      </div>
+    </main>
   );
 }

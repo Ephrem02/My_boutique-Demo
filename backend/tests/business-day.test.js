@@ -413,6 +413,10 @@ describe('closing schedule and settings', () => {
   }
 
   test('reminder before closing time, once', async () => {
+    // "Now + 10 minutes" must stay on today's date in Kigali; in the last
+    // 20 minutes before midnight it would wrap to tomorrow and be "due".
+    const [h, m] = kigaliTime(0).split(':').map(Number);
+    if (h * 60 + m > 23 * 60 + 40) return;
     const s = await staff();
     await openBusinessDay({ date: kigaliDate(0) });
     await setClosingTime(s.m, kigaliTime(10), { reminder_lead_minutes: 30 });

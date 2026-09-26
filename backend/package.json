@@ -11,7 +11,8 @@
     "seed": "knex seed:run",
     "db:roles": "node scripts/setup-db-roles.js",
     "check:permissions": "node scripts/check-permissions.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "seed:e2e": "node scripts/seed-e2e.js"
   },
   "license": "ISC",
   "dependencies": {

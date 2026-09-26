@@ -1,25 +1,28 @@
 import { useTranslation } from 'react-i18next';
 import { setLanguage } from '../i18n';
 
-export default function LanguageSwitcher() {
-  const { i18n } = useTranslation();
+const LANGUAGES = [
+  { code: 'en', label: 'EN', name: 'English' },
+  { code: 'rw', label: 'RW', name: 'Kinyarwanda' },
+];
 
+/** Compact EN / RW segmented control. */
+export default function LanguageSwitcher({ className = '' }) {
+  const { i18n, t } = useTranslation();
   return (
-    <div className="lang-switcher">
-      <button
-        type="button"
-        className={`lang-switcher-btn${i18n.language === 'en' ? ' active' : ''}`}
-        onClick={() => setLanguage('en')}
-      >
-        EN
-      </button>
-      <button
-        type="button"
-        className={`lang-switcher-btn${i18n.language === 'rw' ? ' active' : ''}`}
-        onClick={() => setLanguage('rw')}
-      >
-        RW
-      </button>
+    <div className={`segmented ${className}`} role="group" aria-label={t('settings.language')}>
+      {LANGUAGES.map((lang) => (
+        <button
+          key={lang.code}
+          type="button"
+          className={`segmented-option${i18n.language === lang.code ? ' active' : ''}`}
+          aria-pressed={i18n.language === lang.code}
+          onClick={() => setLanguage(lang.code)}
+          title={lang.name}
+        >
+          {lang.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -1,32 +1,37 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { FileCheck2 } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { ReasonDialog } from '../components/businessDay/Dialogs';
-import { rwf, formatDate } from '../components/businessDay/format';
+import { PageHeader, StatusBadge, Tabs } from '../ui/display';
+import DataTable from '../ui/DataTable';
+import Button from '../ui/Button';
+import { useToast } from '../ui/Toast';
+import { formatRwf, formatDate, formatWhen } from '../ui/format';
 
-const STATUS_BADGE = { pending: 'partial', approved: 'paid', rejected: 'unpaid' };
+const STATUS_TONE = { pending: 'warning', approved: 'success', rejected: 'danger' };
 
 // Reviewers (day.review) see every request and decide them - never their own.
 // Everyone else sees only the requests they made.
 export default function Corrections() {
   const { t } = useTranslation();
+  const toast = useToast();
   const { hasPermission, user } = useAuth();
   const { version } = useNotifications();
   const canReview = hasPermission('day.review');
-  const [status, setStatus] = useState(canReview ? 'pending' : '');
-  const [rows, setRows] = useState([]);
-  const [error, setError] = useState('');
+  const [status, setStatus] = useState(canReview ? 'pending' : 'all');
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
   const [deciding, setDeciding] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      setRows((await client.get('/corrections', { params: status ? { status } : {} })).data);
-      setError('');
+      setRows((await client.get('/corrections', { params: status !== 'all' ? { status } : {} })).data);
+      setError(null);
     } catch (err) {
-      setError(err.message);
+      setError(err);
     }
   }, [status]);
 
@@ -34,64 +39,48 @@ export default function Corrections() {
     load();
   }, [load, version]);
 
-  return (
-    <div className="page-body">
-      <div className="page-header">
-        <h1>{canReview ? t('businessDay.correctionsReview') : t('businessDay.myCorrections')}</h1>
-        <Link className="btn" to="/">{t('businessDay.backToDashboard')}</Link>
-      </div>
-      <div className="tabs" style={{ marginBottom: 16 }}>
-        {['pending', 'approved', 'rejected', ''].map((s) => (
-          <button key={s || 'all'} className={`tab${status === s ? ' active' : ''}`} onClick={() => setStatus(s)}>
-            {s ? t(`businessDay.correctionStatus.${s}`) : t('admin.deliveries.all')}
-          </button>
-        ))}
-      </div>
-      {error && <div className="error-banner">{error}</div>}
+  const columns = [
+    { key: 'business_date', header: t('businessDay.businessDate'), sortable: true, mobile: 'subtitle', render: (r) => formatDate(r.business_date) },
+    { key: 'field', header: t('businessDay.correction.field'), mobile: 'title', render: (r) => t(`businessDay.fields.${r.field}`) },
+    { key: 'change', header: t('businessDay.correction.change'), align: 'right', mobile: 'value', render: (r) => `${formatRwf(r.original_value)} → ${formatRwf(r.requested_value)}` },
+    { key: 'reason', header: t('businessDay.correction.reason'), render: (r) => <span>{r.reason}{r.explanation && <span className="cell-note">{r.explanation}</span>}</span> },
+    { key: 'requested_by_name', header: t('businessDay.correction.requestedBy'), render: (r) => <span>{r.requested_by_name}<span className="cell-note">{formatWhen(r.requested_at, t)}</span></span> },
+    {
+      key: 'status', header: t('common.status'), mobile: 'meta',
+      render: (r) => (
+        <span>
+          <StatusBadge tone={STATUS_TONE[r.status]}>{t(`businessDay.correctionStatus.${r.status}`)}</StatusBadge>
+          {r.reviewed_by_name && <span className="cell-note">{r.reviewed_by_name}{r.review_reason ? `: ${r.review_reason}` : ''}</span>}
+        </span>
+      ),
+    },
+    canReview && {
+      key: 'actions', header: <span className="sr-only">{t('common.actions')}</span>, mobile: 'meta',
+      render: (r) => {
+        if (r.status !== 'pending') return null;
+        if (r.requested_by === user.id) return <span className="cell-note">{t('businessDay.correction.ownRequest')}</span>;
+        return (
+          <span className="row-actions">
+            <Button size="sm" variant="primary" onClick={() => setDeciding({ row: r, decision: 'approve' })}>{t('businessDay.correction.approve')}</Button>
+            <Button size="sm" onClick={() => setDeciding({ row: r, decision: 'reject' })}>{t('businessDay.correction.reject')}</Button>
+          </span>
+        );
+      },
+    },
+  ].filter(Boolean);
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>{t('businessDay.businessDate')}</th>
-            <th>{t('businessDay.correction.field')}</th>
-            <th>{t('businessDay.correction.change')}</th>
-            <th>{t('businessDay.correction.reason')}</th>
-            <th>{t('businessDay.correction.requestedBy')}</th>
-            <th>{t('common.status')}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id}>
-              <td>{formatDate(r.business_date)}</td>
-              <td>{t(`businessDay.fields.${r.field}`)}</td>
-              <td className="num">{rwf(r.original_value)} → {rwf(r.requested_value)}</td>
-              <td style={{ fontSize: 13 }}>{r.reason}{r.explanation && <div className="hint">{r.explanation}</div>}</td>
-              <td>{r.requested_by_name}<div className="hint">{new Date(r.requested_at).toLocaleString()}</div></td>
-              <td>
-                <span className={`badge ${STATUS_BADGE[r.status]}`}>{t(`businessDay.correctionStatus.${r.status}`)}</span>
-                {r.reviewed_by_name && <div className="hint">{r.reviewed_by_name}{r.review_reason ? `: ${r.review_reason}` : ''}</div>}
-              </td>
-              <td style={{ whiteSpace: 'nowrap' }}>
-                {canReview && r.status === 'pending' && r.requested_by !== user.id && (
-                  <>
-                    <button className="btn btn-sm btn-primary" onClick={() => setDeciding({ row: r, decision: 'approve' })}>{t('businessDay.correction.approve')}</button>
-                    <button className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => setDeciding({ row: r, decision: 'reject' })}>{t('businessDay.correction.reject')}</button>
-                  </>
-                )}
-                {canReview && r.status === 'pending' && r.requested_by === user.id && <span className="hint">{t('businessDay.correction.ownRequest')}</span>}
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={7} style={{ color: 'var(--ink-muted)' }}>{t('businessDay.correction.none')}</td></tr>}
-        </tbody>
-      </table>
+  return (
+    <div className="page">
+      <PageHeader title={canReview ? t('businessDay.correctionsReview') : t('businessDay.myCorrections')} subtitle={t('businessDay.correctionsSubtitle')} />
+      <Tabs label={t('businessDay.corrections')} value={status} onChange={setStatus} className="page-tabs"
+        items={['pending', 'approved', 'rejected', 'all'].map((s) => ({ id: s, label: s === 'all' ? t('common.all') : t(`businessDay.correctionStatus.${s}`) }))} />
+      <DataTable caption={t('businessDay.corrections')} columns={columns} rows={rows} loading={!rows} error={error} onRetry={load}
+        empty={{ icon: FileCheck2, title: t('businessDay.correction.none'), description: canReview ? t('businessDay.correction.noneReviewHint') : t('businessDay.correction.noneHint') }} />
 
       {deciding && (
         <ReasonDialog
           title={deciding.decision === 'approve' ? t('businessDay.correction.approveTitle') : t('businessDay.correction.rejectTitle')}
-          hint={`${t(`businessDay.fields.${deciding.row.field}`)}: ${rwf(deciding.row.original_value)} → ${rwf(deciding.row.requested_value)}`}
+          description={`${t(`businessDay.fields.${deciding.row.field}`)}: ${formatRwf(deciding.row.original_value)} → ${formatRwf(deciding.row.requested_value)}`}
           label={t('businessDay.review.reason')}
           required={deciding.decision === 'reject'}
           minLength={deciding.decision === 'reject' ? 5 : 0}
@@ -100,6 +89,7 @@ export default function Corrections() {
           onClose={() => setDeciding(null)}
           onSubmit={async (reason) => {
             await client.post(`/corrections/${deciding.row.id}/decision`, { decision: deciding.decision, reason });
+            toast.success(deciding.decision === 'approve' ? t('businessDay.correction.approvedToast') : t('businessDay.correction.rejectedToast'));
             setDeciding(null);
             load();
           }}

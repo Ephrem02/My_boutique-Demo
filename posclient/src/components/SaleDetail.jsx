@@ -1,112 +1,108 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Ban, Undo2 } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import Dialog from '../ui/Dialog';
+import Button from '../ui/Button';
+import { ErrorState, SkeletonPanel, StatusBadge } from '../ui/display';
+import { useToast } from '../ui/Toast';
+import { formatRwf, formatDateTime, formatNumber } from '../ui/format';
 import ReturnModal from './ReturnModal';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 export default function SaleDetail({ saleId, onClose, onChanged }) {
   const { t } = useTranslation();
+  const toast = useToast();
   const { hasPermission } = useAuth();
   const [sale, setSale] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [returningItem, setReturningItem] = useState(null);
+  const [confirmVoid, setConfirmVoid] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    const { data } = await client.get(`/sales/${saleId}`);
-    setSale(data);
-    setLoading(false);
+    try {
+      setSale((await client.get(`/sales/${saleId}`)).data);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    }
   }, [saleId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function handleVoid() {
-    setError('');
-    try {
-      await client.post(`/sales/${saleId}/void`);
-      await load();
-      onChanged();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
+  const completed = sale?.status === 'completed';
   return (
-    <div className="detail-panel-overlay" onClick={onClose}>
-      <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="detail-panel-header">
-          <div>
-            <h2>{t('saleDetail.title', { id: saleId })}</h2>
-            {sale && <span style={{ color: 'var(--ink-muted)', fontSize: 13 }}>{new Date(sale.created_at).toLocaleString()}</span>}
+    <Dialog
+      title={t('saleDetail.title', { id: saleId })}
+      description={sale ? formatDateTime(sale.created_at) : undefined}
+      onClose={onClose}
+      footer={completed && hasPermission('sales.void') ? (
+        <Button variant="danger" icon={Ban} onClick={() => setConfirmVoid(true)}>{t('saleDetail.voidSale')}</Button>
+      ) : null}
+    >
+      {error && <ErrorState error={error} onRetry={load} />}
+      {!sale && !error && <SkeletonPanel lines={5} />}
+      {sale && (
+        <>
+          <div className="sale-meta">
+            <StatusBadge tone={sale.status === 'voided' ? 'danger' : 'success'}>{t(`badges.${sale.status}`)}</StatusBadge>
+            <span className="text-secondary">{sale.cashier_name} · {t(`paymentMethods.${sale.payment_method}`, { defaultValue: sale.payment_method.replace('_', ' ') })}</span>
           </div>
-          <button className="icon-btn" onClick={onClose}>
-            ×
-          </button>
-        </div>
 
-        {error && <div className="error-banner">{error}</div>}
-        {loading && <p style={{ color: 'var(--ink-muted)' }}>{t('common.loading')}</p>}
+          <ul className="line-items-list" aria-label={t('saleDetail.items')}>
+            {sale.items.map((item) => {
+              const returned = item.returned_quantity || 0;
+              const canReturn = completed && hasPermission('returns.process') && returned < item.quantity;
+              return (
+                <li key={item.id} className="line-item">
+                  <div className="line-item-main">
+                    <span className="line-item-name">{item.product_name}</span>
+                    <span className="line-item-sub text-muted">
+                      {item.sku} · <span className="num">{formatNumber(item.quantity)} × {formatRwf(item.unit_price)}</span>
+                      {returned > 0 && <> · <StatusBadge tone="info">{t('saleDetail.returnedCount', { count: returned })}</StatusBadge></>}
+                    </span>
+                  </div>
+                  <span className="line-item-total num">{formatRwf(item.quantity * Number(item.unit_price))}</span>
+                  {canReturn && (
+                    <Button size="sm" icon={Undo2} onClick={() => setReturningItem(item)} aria-label={t('saleDetail.returnNamed', { name: item.product_name })}>
+                      {t('saleDetail.processReturn')}
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
 
-        {sale && (
-          <>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <span className={`badge ${sale.status === 'voided' ? 'unpaid' : 'paid'}`}>{t(`badges.${sale.status}`)}</span>
-              <span style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
-                {sale.cashier_name} · {t(`paymentMethods.${sale.payment_method}`, { defaultValue: sale.payment_method.replace('_', ' ') })}
-              </span>
-            </div>
+          <div className="total-row">
+            <span>{t('common.total')}</span>
+            <span className="num">{formatRwf(sale.total_amount)}</span>
+          </div>
+        </>
+      )}
 
-            <div className="section-title" style={{ marginTop: 8 }}>{t('saleDetail.items')}</div>
-            {sale.items.map((item) => (
-              <div className="delivery-card" key={item.id}>
-                <div className="delivery-card-top">
-                  <span>{item.product_name}</span>
-                  <span className="num">{item.quantity} × {Number(item.unit_price).toLocaleString()}</span>
-                </div>
-                <div className="delivery-card-amounts">
-                  <span style={{ color: 'var(--ink-muted)' }}>{item.sku}</span>
-                  <span className="num">{(item.quantity * Number(item.unit_price)).toLocaleString()}</span>
-                </div>
-                {sale.status === 'completed' && hasPermission('returns.process') && (
-                  <button
-                    className="btn"
-                    style={{ fontSize: 13, padding: '6px 10px' }}
-                    onClick={() => setReturningItem(item)}
-                  >
-                    {t('saleDetail.processReturn')}
-                  </button>
-                )}
-              </div>
-            ))}
-
-            <div className="cart-total-row" style={{ marginTop: 14 }}>
-              <span className="cart-total-label">{t('common.total')}</span>
-              <span className="cart-total-value num">{Number(sale.total_amount).toLocaleString()}</span>
-            </div>
-
-            {sale.status === 'completed' && hasPermission('sales.void') && (
-              <button className="btn btn-danger btn-block" onClick={handleVoid}>
-                {t('saleDetail.voidSale')}
-              </button>
-            )}
-          </>
-        )}
-
-        {returningItem && (
-          <ReturnModal
-            saleItem={returningItem}
-            onClose={() => setReturningItem(null)}
-            onRecorded={() => {
-              setReturningItem(null);
-              load();
-              onChanged();
-            }}
-          />
-        )}
-      </div>
-    </div>
+      {returningItem && (
+        <ReturnModal saleItem={returningItem} onClose={() => setReturningItem(null)}
+          onRecorded={(amount) => {
+            setReturningItem(null);
+            toast.success(t('saleDetail.refunded', { amount: formatRwf(amount) }));
+            load();
+            onChanged();
+          }} />
+      )}
+      {confirmVoid && (
+        <ConfirmDialog title={t('saleDetail.voidTitle', { id: saleId })} description={t('saleDetail.voidHint')}
+          danger confirmLabel={t('saleDetail.voidSale')} onClose={() => setConfirmVoid(false)}
+          onConfirm={async () => {
+            await client.post(`/sales/${saleId}/void`);
+            setConfirmVoid(false);
+            toast.success(t('saleDetail.voided', { id: saleId }));
+            load();
+            onChanged();
+          }} />
+      )}
+    </Dialog>
   );
 }

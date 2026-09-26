@@ -19,3 +19,8 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Playwright output
+**/e2e/artifacts/
+**/test-results/
+**/playwright-report/

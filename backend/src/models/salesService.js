@@ -22,9 +22,12 @@ const PAYMENT_METHODS = ['cash', 'mtn_mobile_money', 'airtel_money', 'card'];
  * tampering with the request. location_id defaults to the front shelf, since
  * that's where walk-in sales are made from.
  */
-async function createSale({ cashierId, items, paymentMethod }) {
+async function createSale({ cashierId, items, paymentMethod, customerId = null }) {
   if (!items || !items.length) throw new AppError('A sale needs at least one item');
   if (!PAYMENT_METHODS.includes(paymentMethod)) throw new AppError('Unknown payment method');
+  if (customerId && !(await db('institutions').where({ id: Number(customerId) || 0 }).first('id'))) {
+    throw new AppError('Customer not found', 404);
+  }
 
   const frontShelf = await db('stock_locations').where({ name: FRONT_SHELF_NAME }).first();
 
@@ -50,6 +53,7 @@ async function createSale({ cashierId, items, paymentMethod }) {
         payment_method: paymentMethod,
         status: 'completed',
         business_day_id: day.id,
+        institution_id: customerId ? Number(customerId) : null, // the customer's purchase history
       })
       .returning('*');
 
@@ -187,10 +191,21 @@ async function voidSale({ saleId, voidedBy }) {
  */
 const RETURN_REASONS = ['defective', 'damaged', 'wrong_item', 'expired', 'poor_quality', 'changed_mind', 'other'];
 
-async function processReturn({ saleItemId, quantity, reason, reasonCode = null, restocked, processedBy, restrictToCashierId = null }) {
+/**
+ * refundMethod: how the money goes back (any till method - e.g. a card sale
+ * refunded by MTN); defaults to the sale's own method.
+ * canApproveLarge: refunds above the finance approval limit need a store
+ * manager (customer_returns.approve) to process them.
+ */
+async function processReturn({
+  saleItemId, quantity, reason, reasonCode = null, refundMethod = null, restocked, processedBy, restrictToCashierId = null, canApproveLarge = false,
+}) {
   const qty = toPositiveInt(quantity);
   if (reasonCode !== null && reasonCode !== undefined && reasonCode !== '' && !RETURN_REASONS.includes(reasonCode)) {
     throw new AppError(`reason_code must be one of: ${RETURN_REASONS.join(', ')}`, 422);
+  }
+  if (refundMethod && !PAYMENT_METHODS.includes(refundMethod)) {
+    throw new AppError(`refund_method must be one of: ${PAYMENT_METHODS.join(', ')}`, 422);
   }
   return db.transaction(async (trx) => {
     // Refunds are today's transactions (even for an older sale) and need an OPEN day
@@ -214,6 +229,15 @@ async function processReturn({ saleItemId, quantity, reason, reasonCode = null, 
       );
     }
 
+    const refundAmount = qty * Number(saleItem.unit_price);
+    const { getFinanceSettings } = require('../finance/returns');
+    const limit = (await getFinanceSettings(trx)).customer_return_approval_rwf;
+    if (refundAmount > limit && !canApproveLarge) {
+      throw new AppError(`Refunds above RWF ${Number(limit).toLocaleString('en-US')} must be processed by a store manager`, 403);
+    }
+    // Old sales may carry a retired method; refunds always use a current one
+    const method = refundMethod || (PAYMENT_METHODS.includes(sale.payment_method) ? sale.payment_method : 'cash');
+
     const [returnRecord] = await trx('returns')
       .insert({
         sale_item_id: saleItem.id,
@@ -223,9 +247,8 @@ async function processReturn({ saleItemId, quantity, reason, reasonCode = null, 
         restocked: !!restocked,
         processed_by: processedBy,
         business_day_id: day.id,
-        // V1: refunds go back through the sale's own payment method
-        refund_amount: qty * Number(saleItem.unit_price),
-        refund_method: sale.payment_method,
+        refund_amount: refundAmount,
+        refund_method: method,
       })
       .returning('*');
 

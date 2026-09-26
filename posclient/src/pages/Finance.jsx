@@ -3,13 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { Landmark, Truck, Building2, Wallet, PackageMinus, RotateCcw, AlertTriangle, SlidersHorizontal } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { PageHeader, Panel, Metric, DescriptionList, ErrorState, SkeletonPanel, StatusBadge, EmptyState } from '../ui/display';
+import { PageHeader, Panel, Metric, DescriptionList, ErrorState, SkeletonPanel, StatusBadge, EmptyState, Tabs } from '../ui/display';
 import DataTable from '../ui/DataTable';
 import Button from '../ui/Button';
 import { Field, Input, Select } from '../ui/Field';
 import { useToast } from '../ui/Toast';
 import { formatRwf, formatDate, formatWhen } from '../ui/format';
 import { InvoiceDetail } from '../components/parties';
+import { PaymentsReport, ReturnsReport } from '../components/finance/Reports';
 
 const iso = (d) => d.toISOString().slice(0, 10);
 function rangeFor(period) {
@@ -63,6 +64,7 @@ export default function Finance() {
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const [period, setPeriod] = useState('month');
+  const [tab, setTab] = useState('overview');
   const [data, setData] = useState(null);
   const [pendingReturns, setPendingReturns] = useState(null);
   const [error, setError] = useState(null);
@@ -121,9 +123,17 @@ export default function Finance() {
           </Select>
         )} />
 
-      {error && <ErrorState error={error} onRetry={load} />}
-      {!data && !error && <div className="dashboard-grid"><SkeletonPanel lines={6} /><SkeletonPanel lines={6} /></div>}
-      {data && (
+      <Tabs label={t('finance.sections')} value={tab} onChange={setTab} items={[
+        { id: 'overview', label: t('finance.tabs.overview') },
+        { id: 'payments', label: t('finance.tabs.payments') },
+        { id: 'returns', label: t('finance.tabs.returns') },
+      ]} />
+      {tab === 'payments' && <PaymentsReport range={rangeFor(period)} onOpenInvoice={(kind, id) => setOpen({ kind, id })} />}
+      {tab === 'returns' && <ReturnsReport range={rangeFor(period)} onOpenInvoice={(kind, id) => setOpen({ kind, id })} />}
+
+      {tab === 'overview' && error && <ErrorState error={error} onRetry={load} />}
+      {tab === 'overview' && !data && !error && <div className="dashboard-grid"><SkeletonPanel lines={6} /><SkeletonPanel lines={6} /></div>}
+      {tab === 'overview' && data && (
         <div className="stack">
           <div className="finance-grid">
             <Panel title={t('finance.payablesTitle')} subtitle={t('finance.payablesSubtitle')} icon={Truck}>
@@ -205,6 +215,14 @@ export default function Finance() {
           <div className="finance-grid">
             <Panel title={t('finance.supplierReturnsByReason')} icon={PackageMinus}>{reasonList(data.returns_by_reason.supplier)}</Panel>
             <Panel title={t('finance.customerReturnsByReason')} icon={PackageMinus}>{reasonList(data.returns_by_reason.customer)}</Panel>
+            <Panel title={t('finance.returnsCostTitle')} subtitle={t('finance.returnsCostHint')} icon={PackageMinus}>
+              <Metric size="lg" label={t('finance.returnsCostTotal')} value={formatRwf(data.returns_cost.total)} tone={data.returns_cost.total > 0 ? 'danger' : undefined} />
+              <DescriptionList items={[
+                { label: t('finance.refundsPaid'), value: formatRwf(data.returns_cost.account_refunds) },
+                { label: t('finance.tillRefunds'), value: formatRwf(data.returns_cost.till_refunds) },
+                { label: t('finance.writtenOffCost'), value: formatRwf(data.returns_cost.written_off_cost) },
+              ]} />
+            </Panel>
           </div>
 
           <Panel title={t('finance.recentReversals')} subtitle={t('finance.recentReversalsHint')} icon={RotateCcw}>

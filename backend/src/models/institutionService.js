@@ -21,7 +21,7 @@ const s = SIDES.customer;
  * payment ({ amount, method, reference_no }): paid at the sale; without it
  * the whole invoice is on credit. Balances/status come from the ledger.
  */
-async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment }) {
+async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment, fromLocation = 'store_room' }) {
   if (!items || !items.length) throw new AppError('An order needs at least one item');
   const lines = inLockOrder(items).map((i) => {
     const unitPrice = Number(i.unit_price);
@@ -39,8 +39,8 @@ async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDat
     : null;
   if (dueDate && Number.isNaN(Date.parse(dueDate))) throw new AppError('due_date must be a date (YYYY-MM-DD)', 422);
 
-  const storeRoom = await db('stock_locations').where({ name: 'store_room' }).first();
-  if (!storeRoom) throw new AppError('store_room location is not configured');
+  const storeRoom = await db('stock_locations').where({ name: fromLocation }).first();
+  if (!storeRoom) throw new AppError(`${fromLocation} location is not configured`);
   const recordedBy = req.user.id;
 
   return db.transaction(async (trx) => {
@@ -56,7 +56,8 @@ async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDat
         discount_amount: ledger.n(discount),
         notes: ledger.text(notes, 1000),
         total_amount: totalAmount,
-        delivery_status: 'pending',
+        // sold at the till: the customer takes the goods there and then
+        delivery_status: fromLocation === 'front_shelf' ? 'delivered' : 'pending',
         recorded_by: recordedBy,
       })
       .returning('*');

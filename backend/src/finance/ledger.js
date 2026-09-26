@@ -132,7 +132,16 @@ async function recordPayment({ req, s, invoiceId, amount, method, referenceNo, t
  * credit: the supplier pays us back, or we pay the customer back. Never more
  * than the credit on that invoice.
  */
-async function recordRefund({ req, s, invoiceId, amount, method, referenceNo, txnDate, note }) {
+/** A return that a refund/credit settles must belong to the invoice the money comes from. */
+async function returnFor(trx, s, returnId, invoiceId) {
+  if (returnId === undefined || returnId === null || returnId === '') return null;
+  const ret = await trx(s.returns).where({ id: Number(returnId) || 0 }).first();
+  if (!ret || ret[s.invoice] !== invoiceId) throw new AppError('That return is not on this invoice', 422);
+  if (s.side === 'customer' && ret.status !== 'approved') throw new AppError('Only an approved return can be settled', 409);
+  return ret;
+}
+
+async function recordRefund({ req, s, invoiceId, amount, method, referenceNo, txnDate, note, returnId }) {
   const value = parseAmount(amount);
   const how = parseMethod(method);
   const date = parseDate(txnDate, 'txn_date');
@@ -142,20 +151,21 @@ async function recordRefund({ req, s, invoiceId, amount, method, referenceNo, tx
     const credit = n(-before.balance);
     if (credit <= 0) throw new AppError('There is no credit on this invoice to refund', 409);
     if (value > credit) throw new AppError(`At most ${formatRwf(credit)} can be refunded on this invoice`, 422);
-    const txn = await insertRefund(trx, { req, s, invoice, amount: value, method: how, referenceNo, txnDate: date, note });
+    const ret = await returnFor(trx, s, returnId, invoice.id);
+    const txn = await insertRefund(trx, { req, s, invoice, amount: value, method: how, referenceNo, txnDate: date, note, returnId: ret?.id });
     return { transaction: txn, invoice: await balanceOf(trx, s, invoice.id) };
   });
 }
 
-async function insertRefund(trx, { req, s, invoice, amount, method, referenceNo, txnDate, note, recordedBy = req.user.id }) {
+async function insertRefund(trx, { req, s, invoice, amount, method, referenceNo, txnDate, note, returnId = null, recordedBy = req.user.id }) {
   const businessDayId = await dayFor(trx, method);
   const [txn] = await trx(s.txns).insert({
-    [s.party]: invoice[s.party], [s.invoice]: invoice.id, type: 'refund', amount, method,
+    [s.party]: invoice[s.party], [s.invoice]: invoice.id, type: 'refund', amount, method, return_id: returnId,
     reference_no: text(referenceNo, 100), txn_date: txnDate, note: text(note, 1000), business_day_id: businessDayId, recorded_by: recordedBy,
   }).returning('*');
   await audit(req, {
     action: `${auditPrefix(s)}_refund.create`, entityType: s.entityType, entityId: invoice.id,
-    newValues: { transaction_id: txn.id, amount, method, reference_no: txn.reference_no, txn_date: txnDate },
+    newValues: { transaction_id: txn.id, amount, method, reference_no: txn.reference_no, txn_date: txnDate, return_id: returnId },
     metadata: businessDayId ? { business_day_id: businessDayId } : {},
   }, { trx, required: true });
   return txn;
@@ -166,7 +176,7 @@ async function insertRefund(trx, { req, s, invoice, amount, method, referenceNo,
  * Moves credit from one invoice of the same party (e.g. after a return) onto
  * another invoice that is still owed.
  */
-async function applyCredit({ req, s, invoiceId, sourceInvoiceId, amount, note }) {
+async function applyCredit({ req, s, invoiceId, sourceInvoiceId, amount, note, returnId }) {
   const value = parseAmount(amount);
   if (Number(sourceInvoiceId) === Number(invoiceId)) throw new AppError('Choose a different invoice to take the credit from', 422);
   return db.transaction(async (trx) => {
@@ -181,14 +191,15 @@ async function applyCredit({ req, s, invoiceId, sourceInvoiceId, amount, note })
     if (available <= 0) throw new AppError('The source invoice has no credit', 409);
     if (owed <= 0) throw new AppError('Nothing is owed on this invoice', 409);
     if (value > available || value > owed) throw new AppError(`At most ${formatRwf(Math.min(available, owed))} can be applied`, 422);
+    const ret = await returnFor(trx, s, returnId, source.id);
 
     const [txn] = await trx(s.txns).insert({
-      [s.party]: target[s.party], [s.invoice]: target.id, [s.source]: source.id, type: 'credit_applied', amount: value,
+      [s.party]: target[s.party], [s.invoice]: target.id, [s.source]: source.id, type: 'credit_applied', amount: value, return_id: ret?.id || null,
       txn_date: new Date().toISOString().slice(0, 10), note: text(note, 1000), recorded_by: req.user.id,
     }).returning('*');
     await audit(req, {
       action: `${auditPrefix(s)}_credit.apply`, entityType: s.entityType, entityId: target.id,
-      newValues: { transaction_id: txn.id, amount: value, from_invoice: source.id, to_invoice: target.id },
+      newValues: { transaction_id: txn.id, amount: value, from_invoice: source.id, to_invoice: target.id, return_id: ret?.id || null },
     }, { trx, required: true });
     return { transaction: txn, invoice: await balanceOf(trx, s, target.id), source: await balanceOf(trx, s, source.id) };
   });
@@ -339,6 +350,14 @@ async function invoiceDetail({ s, invoiceId }) {
   const people = await db('users').whereIn('id', [row.recorded_by, row.received_by].filter(Boolean)).select('id', 'full_name');
   const nameOf = (id) => people.find((u) => u.id === id)?.full_name || null;
   const subtotal = n(items.reduce((sum, i) => sum + i.quantity * Number(i[s.price]), 0));
+  const transactions = await transactionsFor(s, (q) => q.where(`t.${s.invoice}`, row.id).orWhere(`t.${s.source}`, row.id));
+  const returns = await returnsFor(s, { [`r.${s.invoice}`]: row.id });
+  withRunningBalance(s, row, transactions, returns);
+  for (const r of returns) {
+    r.settlements = transactions
+      .filter((x) => x.return_id === r.id && !x.reversed_by)
+      .map((x) => ({ id: x.id, type: x.type, amount: x.amount, method: x.method, invoice_id: x.invoice_id, txn_date: x.txn_date }));
+  }
   return {
     ...presentInvoice(s, row),
     subtotal,
@@ -350,9 +369,38 @@ async function invoiceDetail({ s, invoiceId }) {
       returned_quantity: returned.get(i.id) || 0,
       returnable_quantity: i.quantity - (returned.get(i.id) || 0),
     })),
-    transactions: await transactionsFor(s, (q) => q.where(`t.${s.invoice}`, row.id).orWhere(`t.${s.source}`, row.id)),
-    returns: await returnsFor(s, { [`r.${s.invoice}`]: row.id }),
+    transactions,
+    returns,
   };
+}
+
+/**
+ * Sets balance_after on every transaction and return of one invoice, in the
+ * order they happened: the "remaining balance" after each instalment.
+ */
+function withRunningBalance(s, invoice, transactions, returns) {
+  const effectOn = (t) => {
+    if (t.type === 'payment') return -t.amount;
+    if (t.type === 'refund') return t.amount;
+    if (t.type === 'credit_applied') return t.invoice_id === invoice.id ? -t.amount : t.amount; // credit in / moved out
+    return 0;
+  };
+  const byId = new Map(transactions.map((t) => [String(t.id), t]));
+  const events = [
+    ...transactions.map((t) => ({
+      at: new Date(t.created_at).getTime(), rank: 1, seq: Number(t.id), target: t,
+      effect: t.type === 'reversal' ? -effectOn(byId.get(String(t.reverses_id)) || { type: 'x' }) : effectOn(t),
+    })),
+    ...returns.filter((r) => s.side === 'supplier' || r.status === 'approved')
+      .map((r) => ({ at: new Date(r.decided_at || r.created_at).getTime(), rank: 0, seq: r.id, target: r, effect: -r.total_value })),
+    // Rows written in one database transaction share a timestamp: a return
+    // comes before the refund paid with it, then entries in the order recorded.
+  ].sort((a, b) => a.at - b.at || a.rank - b.rank || a.seq - b.seq);
+  let balance = n(invoice.total_amount);
+  for (const e of events) {
+    balance = n(balance + e.effect);
+    e.target.balance_after = balance;
+  }
 }
 
 /**

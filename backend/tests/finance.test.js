@@ -356,3 +356,129 @@ describe('till, permissions and overview', () => {
     expect((await request(app).post('/api/finance/customer/invoices/1/payments')).status).toBe(401);
   });
 });
+
+describe('till: customers, credit sales and returns', () => {
+  beforeEach(() => resetDb());
+
+  async function customer(s) {
+    return ok(await s.m.post('/api/institutions').send({ name: 'Mama Aline Shop', type: 'shop' }));
+  }
+
+  test('a paid till sale can name the customer: it shows in their purchase history', async () => {
+    const s = await staff();
+    const c = await customer(s);
+    const p = await createProduct({ shelf: 10, price: 2000 });
+    const sale = ok(await s.c.post('/api/sales').send({ payment_method: 'cash', customer_id: c.id, items: [{ product_id: p.id, quantity: 2 }] }));
+    expect((await s.m.get(`/api/sales/${sale.id}`)).body.customer_name).toBe('Mama Aline Shop');
+    const profile = ok(await s.c.get(`/api/institutions/${c.id}`), 200);
+    expect(profile.till_sales).toEqual([expect.objectContaining({ id: sale.id, total_amount: 4000, cashier_name: 'Alice Cashier' })]);
+    expect((await s.c.post('/api/sales').send({ payment_method: 'cash', customer_id: 99999, items: [{ product_id: p.id, quantity: 1 }] })).status).toBe(404);
+  });
+
+  test('selling on account at the till: invoice at shelf prices from the front shelf, part paid, rest owed', async () => {
+    const s = await staff();
+    const c = await customer(s);
+    const p = await createProduct({ shelf: 10, storeRoom: 5, price: 3000 });
+    expect((await s.c.post('/api/sales').send({ payment_method: 'account', items: [{ product_id: p.id, quantity: 1 }] })).status).toBe(422);
+    const res = ok(await s.c.post('/api/sales').send({
+      payment_method: 'account', customer_id: c.id, items: [{ product_id: p.id, quantity: 4, unit_price: 1 }], // price from the till, not the request
+      payment: { amount: 5000, method: 'cash' },
+    }));
+    expect(res).toMatchObject({ kind: 'invoice', total_amount: 12000, amount_paid: 5000, balance: 7000, status: 'partial', delivery_status: 'delivered' });
+    expect(await stockOf(p.id)).toMatchObject({ front_shelf: 6, store_room: 5 });
+    expect((await s.m.get('/api/business-days/dashboard')).body.today.figures.cash.account_cash_in).toBe(5000);
+    // store keepers may sell on account but not take the payment
+    const keeperPay = await s.k.post('/api/sales').send({ payment_method: 'account', customer_id: c.id, items: [{ product_id: p.id, quantity: 1 }], payment: { amount: 1, method: 'cash' } });
+    expect(keeperPay.status).toBe(403);
+  });
+
+  test('till refunds can go back by another method; large refunds need a store manager', async () => {
+    const s = await staff();
+    const laptop = await createProduct({ shelf: 5, price: 800000 });
+    const soap = await createProduct({ shelf: 5, price: 1000 });
+    const big = ok(await s.c.post('/api/sales').send({ payment_method: 'card', items: [{ product_id: laptop.id, quantity: 1 }] }));
+    const small = ok(await s.c.post('/api/sales').send({ payment_method: 'card', items: [{ product_id: soap.id, quantity: 1 }] }));
+
+    const mtn = ok(await s.c.post('/api/returns').send({ sale_item_id: small.items[0].id, quantity: 1, reason_code: 'defective', refund_method: 'mtn_mobile_money', restocked: false }));
+    expect(mtn).toMatchObject({ refund_method: 'mtn_mobile_money', reason_code: 'defective' });
+
+    const denied = await s.c.post('/api/returns').send({ sale_item_id: big.items[0].id, quantity: 1, reason_code: 'defective', refund_method: 'mtn_mobile_money' });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error).toMatch(/store manager/);
+    const byManager = ok(await s.m.post('/api/returns').send({ sale_item_id: big.items[0].id, quantity: 1, reason_code: 'defective', refund_method: 'mtn_mobile_money', restocked: true }));
+    expect(Number(byManager.refund_amount)).toBe(800000);
+    expect((await s.m.post('/api/returns').send({ sale_item_id: small.items[0].id, quantity: 1, refund_method: 'cheque' })).status).toBe(422);
+  });
+});
+
+describe('ledger links, running balances and reports', () => {
+  beforeEach(() => resetDb());
+
+  test('each payment shows the remaining balance; a refund is linked to the return it settles', async () => {
+    const s = await staff();
+    const { delivery } = await supplierWithTvs(s);
+    ok(await pay(s.m, 'supplier', delivery.id, { amount: 1500000, method: 'bank_transfer' }));
+    ok(await pay(s.m, 'supplier', delivery.id, { amount: 500000, method: 'cash' }));
+    let d = await detail(s.m, 'supplier', delivery.id);
+    const ret = ok(await s.k.post(`/api/finance/supplier/invoices/${delivery.id}/returns`).send({ items: [{ item_id: d.items[0].id, quantity: 1 }], reason: 'defective' }));
+    const other = ok(await s.m.post('/api/suppliers').send({ name: 'Unrelated' }));
+    expect(other.id).toBeTruthy();
+    expect((await s.m.post(`/api/finance/supplier/invoices/${delivery.id}/refunds`).send({ amount: 1, method: 'cash', return_id: 999 })).status).toBe(422);
+    ok(await s.m.post(`/api/finance/supplier/invoices/${delivery.id}/refunds`).send({ amount: 100000, method: 'mtn_mobile_money', return_id: ret.return.id }));
+    d = await detail(s.m, 'supplier', delivery.id);
+    expect(d.transactions.map((t) => t.balance_after)).toEqual([500000, 0, 0]);
+    expect(d.returns[0].balance_after).toBe(-100000);
+    expect(d.returns[0].settlements).toEqual([expect.objectContaining({ type: 'refund', amount: 100000, method: 'mtn_mobile_money' })]);
+  });
+
+  test('payments report answers "how much did we pay supplier X this month, and how" - and exports CSV', async () => {
+    const s = await staff();
+    const { delivery, supplier } = await supplierWithTvs(s);
+    const first = ok(await pay(s.m, 'supplier', delivery.id, { amount: 300000, method: 'mtn_mobile_money', reference_no: '=HYPERLINK("x")' }));
+    ok(await pay(s.m, 'supplier', delivery.id, { amount: 200000, method: 'airtel_money' }));
+    ok(await s.m.post(`/api/finance/supplier/transactions/${first.transaction.id}/reverse`).send({ reason: 'Paid the wrong supplier' }));
+    const { invoice } = await customerInvoice(s, { payment: { amount: 50000, method: 'mtn_mobile_money' } });
+    expect(invoice.amount_paid).toBe(50000);
+
+    expect((await s.c.get('/api/finance/reports/payments')).status).toBe(403);
+    const month = new Date().toISOString().slice(0, 8) + '01';
+    const report = ok(await s.m.get(`/api/finance/reports/payments?side=supplier&party_id=${supplier.id}&from=${month}`), 200);
+    expect(report.totals).toMatchObject({ supplier_payments: 200000, customer_payments: 0 });
+    expect(report.rows.find((r) => r.txn_id === first.transaction.id).reversed).toBe(true);
+    const mtn = ok(await s.m.get('/api/finance/reports/payments?side=customer&method=mtn_mobile_money'), 200);
+    expect(mtn.totals.customer_payments).toBe(50000);
+
+    const csv = await s.m.get(`/api/finance/reports/payments?side=supplier&format=csv`);
+    expect(csv.headers['content-type']).toMatch(/text\/csv/);
+    expect(csv.text).toMatch(/Date,Ledger,Supplier \/ customer/);
+    expect(csv.text).toContain(`"'=HYPERLINK(`); // formulas are neutralized
+  });
+
+  test('returns report lists every returned line with its reason; overview shows what returns cost', async () => {
+    const s = await staff();
+    const { delivery } = await supplierWithTvs(s);
+    const d = await detail(s.k, 'supplier', delivery.id);
+    ok(await s.k.post(`/api/finance/supplier/invoices/${delivery.id}/returns`).send({ items: [{ item_id: d.items[0].id, quantity: 2 }], reason: 'damaged' }));
+
+    const { invoice } = await customerInvoice(s, { qty: 2, price: 30000, payment: { amount: 60000, method: 'card' } }); // laptop costs 60,000... per helper
+    const inv = await detail(s.c, 'customer', invoice.id);
+    ok(await s.c.post(`/api/finance/customer/invoices/${invoice.id}/returns`).send({
+      items: [{ item_id: inv.items[0].id, quantity: 1, restock: false }], reason: 'defective', refund: { amount: 30000, method: 'mtn_mobile_money' },
+    }));
+    const soap = await createProduct({ shelf: 3, price: 1000, cost: 400 });
+    const sale = ok(await s.c.post('/api/sales').send({ payment_method: 'cash', items: [{ product_id: soap.id, quantity: 1 }] }));
+    ok(await s.c.post('/api/returns').send({ sale_item_id: sale.items[0].id, quantity: 1, reason_code: 'expired', restocked: false }));
+
+    const report = ok(await s.m.get('/api/finance/reports/returns'), 200);
+    expect(report.rows.map((r) => [r.side, r.reason, r.quantity])).toEqual(expect.arrayContaining([
+      ['supplier', 'damaged', 2], ['customer', 'defective', 1], ['till', 'expired', 1],
+    ]));
+    expect(report.totals).toMatchObject({ supplier_value: 200000, customer_value: 30000, till_value: 1000, written_off_cost: 60400 });
+    const supplierOnly = ok(await s.m.get('/api/finance/reports/returns?side=supplier&reason=damaged'), 200);
+    expect(supplierOnly.rows).toHaveLength(1);
+
+    const o = ok(await s.m.get('/api/finance/overview'), 200);
+    expect(o.returns_cost).toMatchObject({ account_refunds: 30000, till_refunds: 1000, written_off_cost: 60400, total: 91400 });
+  });
+});
+

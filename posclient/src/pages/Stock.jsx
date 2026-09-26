@@ -10,7 +10,10 @@ import Button from '../ui/Button';
 import { useToast } from '../ui/Toast';
 import { formatNumber, formatWhen } from '../ui/format';
 
-const MOVEMENT_TONE = { stock_in: 'success', returned: 'info', transfer_in: 'neutral', transfer_out: 'neutral', sold: 'neutral', damaged: 'danger', adjustment: 'warning' };
+const MOVEMENT_TONE = {
+  stock_in: 'success', returned: 'info', transfer_in: 'neutral', transfer_out: 'neutral', sold: 'neutral', damaged: 'danger', adjustment: 'warning',
+  returned_to_supplier: 'warning',
+};
 
 export default function Stock() {
   const { t } = useTranslation();

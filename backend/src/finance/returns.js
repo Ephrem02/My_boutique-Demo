@@ -235,7 +235,7 @@ async function applyCustomerReturn(trx, { req, s, ret, invoice, approval, decide
     }
     await ledger.insertRefund(trx, {
       req, s, invoice, amount: n(ret.refund_amount), method: ret.refund_method, referenceNo: ret.refund_reference,
-      txnDate: new Date().toISOString().slice(0, 10), note: `Refund for return #${ret.id}`,
+      txnDate: new Date().toISOString().slice(0, 10), note: `Refund for return #${ret.id}`, returnId: ret.id,
     });
   }
   await audit(req, {

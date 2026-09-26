@@ -4,6 +4,7 @@
 const db = require('../config/db');
 const { AppError } = require('../utils/AppError');
 const { ACCOUNT_METHODS, SIDES } = require('./sides');
+const { returnLines } = require('./reports');
 
 const n = (v) => Math.round(Number(v || 0) * 100) / 100;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -101,6 +102,21 @@ async function overview({ from, to } = {}) {
     pending_returns: Number((await db('customer_returns').where({ status: 'pending' }).count({ c: '*' }).first()).c),
   };
 
+  // What customer returns cost: money handed back + goods that could not be resold
+  const returnTotals = (await returnLines({ side: 'all', from, to })).totals;
+  const tillRefunds = await (() => {
+    const q = db('returns');
+    if (from) q.where('created_at', '>=', from);
+    if (to) q.where('created_at', '<', db.raw("?::date + interval '1 day'", [to]));
+    return sumOf(q, 'refund_amount');
+  })();
+  const returnsCost = {
+    account_refunds: receivables.refunds_paid,
+    till_refunds: tillRefunds,
+    written_off_cost: returnTotals.written_off_cost,
+    total: n(receivables.refunds_paid + tillRefunds + returnTotals.written_off_cost),
+  };
+
   const posSales = await (() => {
     const q = db('sales').where({ status: 'completed' }).groupBy('payment_method').select('payment_method').sum({ total: 'total_amount' });
     if (from) q.where('created_at', '>=', from);
@@ -114,6 +130,7 @@ async function overview({ from, to } = {}) {
     period: { from: from || null, to: to || null },
     payables,
     receivables,
+    returns_cost: returnsCost,
     by_method: {
       methods: ACCOUNT_METHODS,
       pos_sales: pos,

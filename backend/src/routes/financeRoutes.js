@@ -10,6 +10,8 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/overview', requirePermission('reports.financial.view'), finance.overview);
+router.get('/reports/payments', requirePermission('reports.financial.view'), finance.paymentsReport);
+router.get('/reports/returns', requirePermission('reports.financial.view'), finance.returnsReport);
 router.get('/settings', requirePermission('reports.financial.view', 'settings.manage'), finance.getSettings);
 router.put('/settings', requirePermission('settings.manage'), finance.updateSettings);
 

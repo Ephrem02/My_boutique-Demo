@@ -30,7 +30,7 @@ test('cashier pays off an overdue customer invoice in instalment history', async
   await expect(account.getByText('Owes us')).toBeVisible();
   await account.getByRole('tab', { name: 'Statement' }).click();
   await expect(account.getByRole('table', { name: 'Statement' })).toBeVisible();
-  await account.getByRole('tab', { name: /Orders/ }).click();
+  await account.getByRole('tab', { name: /Invoices/ }).click();
 
   const overdueCard = account.locator('.record-card').filter({ hasText: 'Overdue' });
   await overdueCard.getByRole('button', { name: 'Open' }).click();
@@ -85,3 +85,45 @@ test('manager approves a large customer return from the Finance page', async ({ 
   await expect(page.getByRole('status').filter({ hasText: 'Return approved' })).toBeVisible();
   await expect(invoice.getByText('Credit balance')).toBeVisible(); // paid in full, then returned: the customer holds credit
 });
+
+test('cashier sells on account at the till, part paid; it lands on the customer ledger', async ({ page }) => {
+  await loginAs(page, 'cashier', { theme: 'light' });
+  await page.goto('/pos');
+  await settle(page);
+  await page.getByRole('button', { name: /^Add Soap bar/ }).click();
+  await page.getByRole('button', { name: /^Add Soap bar/ }).click();
+  const cart = page.locator('.cart-panel');
+  await cart.getByLabel('Customer (optional)').selectOption({ label: 'Green Hills School' });
+  await cart.getByText('On account').click();
+  await cart.getByLabel(/Paid now/).fill('600');
+  await expect(cart.getByText('Goes on their account: RWF 1,000')).toBeVisible();
+  await noSeriousA11yIssues(page, 'till on account');
+  await cart.getByRole('button', { name: 'Sell on account' }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Sold on account to Green Hills School · RWF 1,000 owed/ })).toBeVisible();
+
+  await page.goto('/institutions');
+  await settle(page);
+  await page.getByRole('button', { name: /Green Hills School/ }).first().click();
+  const account = page.getByRole('dialog', { name: 'Green Hills School' });
+  await expect(account.locator('.record-card').filter({ hasText: 'RWF 1,600' })).toBeVisible();
+});
+
+test('manager answers "what did we pay each supplier, and how" and exports it', async ({ page }) => {
+  await loginAs(page, 'manager', { theme: 'light' });
+  await page.goto('/finance');
+  await settle(page);
+  await page.getByRole('tab', { name: 'Payments' }).click();
+  await page.getByLabel('Ledger').selectOption('supplier');
+  await page.getByLabel('Supplier / customer').selectOption({ label: 'Kigali Wholesale Ltd' });
+  const table = page.getByRole('table', { name: 'Payment history' });
+  await expect(table.getByText('MP240118')).toBeVisible();
+  await noSeriousA11yIssues(page, 'payments report');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
+  expect(download.suggestedFilename()).toMatch(/^payments-\d{4}-\d{2}-\d{2}\.csv$/);
+
+  await page.getByRole('tab', { name: 'Returns' }).click();
+  const returns = page.getByRole('table', { name: 'Returned goods' });
+  await expect(returns.getByText('Damaged').first()).toBeVisible();
+  await noSeriousA11yIssues(page, 'returns report');
+});
+

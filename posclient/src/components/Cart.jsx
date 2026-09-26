@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Banknote, CreditCard, Minus, Plus, ShoppingCart, Smartphone, Trash2 } from 'lucide-react';
+import { Banknote, BookUser, CreditCard, Minus, Plus, ShoppingCart, Smartphone, Trash2 } from 'lucide-react';
 import client from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { Field, Input, Select } from '../ui/Field';
+import { ACCOUNT_METHODS } from './finance/constants';
 import Button, { IconButton } from '../ui/Button';
 import Dialog from '../ui/Dialog';
 import { EmptyState, ErrorState } from '../ui/display';
@@ -17,8 +20,45 @@ const PAYMENT_METHODS = [
   { id: 'card', icon: CreditCard },
 ];
 
-function CartContents({ items, total, onUpdateQuantity, onRemove, paymentMethod, setPaymentMethod, error, loading, blocked, onCheckout }) {
+/**
+ * Optional customer for the sale. Named: the sale joins their purchase
+ * history. "On account" (needs a customer): the sale becomes an invoice on
+ * their ledger, with part or no payment now.
+ */
+function CustomerFields({ customers, customerId, setCustomerId, paymentMethod, account, setAccount, total }) {
   const { t } = useTranslation();
+  if (!customers) return null;
+  return (
+    <div className="cart-customer">
+      <Field label={t('pos.customerOptional')}>
+        <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+          <option value="">{t('pos.walkInCustomer')}</option>
+          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+      </Field>
+      {paymentMethod === 'account' && (
+        <div className="form-row">
+          <Field label={t('pos.paidNowOptional')} hint={t('pos.owedAfter', { amount: formatRwf(Math.max(0, total - (Number(account.amount) || 0))) })}>
+            <Input type="number" inputMode="numeric" min="0" step="1" max={total} value={account.amount}
+              onChange={(e) => setAccount((a) => ({ ...a, amount: e.target.value }))} />
+          </Field>
+          <Field label={t('payment.method')}>
+            <Select value={account.method} onChange={(e) => setAccount((a) => ({ ...a, method: e.target.value }))}>
+              {ACCOUNT_METHODS.map((m) => <option key={m} value={m}>{t(`paymentMethods.${m}`)}</option>)}
+            </Select>
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CartContents({
+  items, total, onUpdateQuantity, onRemove, paymentMethod, setPaymentMethod, error, loading, blocked, onCheckout,
+  customers, customerId, setCustomerId, account, setAccount, canSellOnAccount,
+}) {
+  const { t } = useTranslation();
+  const methods = [...PAYMENT_METHODS, ...(canSellOnAccount && customerId ? [{ id: 'account', icon: BookUser }] : [])];
   return (
     <>
       <div className="cart-items">
@@ -49,13 +89,15 @@ function CartContents({ items, total, onUpdateQuantity, onRemove, paymentMethod,
 
       <div className="cart-footer">
         {error && <ErrorState error={error} action={t('errors.actions.sale')} />}
+        <CustomerFields customers={customers} customerId={customerId} setCustomerId={setCustomerId}
+          paymentMethod={paymentMethod} account={account} setAccount={setAccount} total={total} />
         <fieldset className="payment-methods">
           <legend className="payment-legend">{t('pos.paymentMethod')}</legend>
-          {PAYMENT_METHODS.map(({ id, icon: Icon }) => (
+          {methods.map(({ id, icon: Icon }) => (
             <label key={id} className={`payment-option${paymentMethod === id ? ' selected' : ''}`}>
               <input type="radio" name="payment-method" value={id} checked={paymentMethod === id} onChange={() => setPaymentMethod(id)} />
               <Icon aria-hidden="true" />
-              <span>{t(`paymentMethods.${id}`)}</span>
+              <span>{id === 'account' ? t('pos.onAccount') : t(`paymentMethods.${id}`)}</span>
             </label>
           ))}
         </fieldset>
@@ -65,7 +107,7 @@ function CartContents({ items, total, onUpdateQuantity, onRemove, paymentMethod,
         </div>
         <Button variant="primary" size="lg" block disabled={items.length === 0 || blocked} loading={loading}
           loadingText={t('pos.completingSale')} onClick={onCheckout}>
-          {t('pos.completeSale')}
+          {paymentMethod === 'account' ? t('pos.sellOnAccount') : t('pos.completeSale')}
         </Button>
       </div>
     </>
@@ -81,8 +123,24 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
   const { t } = useTranslation();
   const toast = useToast();
   const { isMobile } = useBreakpoint();
+  const { hasPermission } = useAuth();
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [customers, setCustomers] = useState(null);
+  const [customerId, setCustomerId] = useState('');
+  const [account, setAccount] = useState({ amount: '', method: 'cash' });
   const [loading, setLoading] = useState(false);
+  const canSellOnAccount = hasPermission('institution_orders.manage');
+
+  useEffect(() => {
+    if (!hasPermission('institutions.view')) return;
+    client.get('/institutions').then(({ data }) => setCustomers(data)).catch(() => setCustomers(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "On account" only makes sense with a customer
+  useEffect(() => {
+    if (!customerId && paymentMethod === 'account') setPaymentMethod('cash');
+  }, [customerId, paymentMethod]);
   const [error, setError] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -94,11 +152,21 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
     setError(null);
     setLoading(true);
     try {
-      await client.post('/sales', {
+      const onAccount = paymentMethod === 'account';
+      const paidNow = onAccount ? Number(account.amount) || 0 : 0;
+      const { data } = await client.post('/sales', {
         payment_method: paymentMethod,
+        customer_id: customerId ? Number(customerId) : undefined,
         items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
+        ...(paidNow > 0 && { payment: { amount: paidNow, method: account.method } }),
       });
-      toast.success(t('pos.saleCompleted', { total: formatRwf(total), method: t(`paymentMethods.${paymentMethod}`) }));
+      const name = customers?.find((c) => String(c.id) === String(customerId))?.name;
+      toast.success(onAccount
+        ? t('pos.soldOnAccount', { name, owed: formatRwf(data.balance) })
+        : t('pos.saleCompleted', { total: formatRwf(total), method: t(`paymentMethods.${paymentMethod}`) }));
+      setCustomerId('');
+      setAccount({ amount: '', method: 'cash' });
+      setPaymentMethod('cash');
       setSheetOpen(false);
       onSold();
     } catch (err) {
@@ -111,7 +179,8 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
   const contents = (
     <CartContents items={items} total={total} onUpdateQuantity={onUpdateQuantity} onRemove={onRemove}
       paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} error={error} loading={loading}
-      blocked={blocked} onCheckout={handleCheckout} />
+      blocked={blocked} onCheckout={handleCheckout} customers={customers} customerId={customerId} setCustomerId={setCustomerId}
+      account={account} setAccount={setAccount} canSellOnAccount={canSellOnAccount} />
   );
 
   if (isMobile) {

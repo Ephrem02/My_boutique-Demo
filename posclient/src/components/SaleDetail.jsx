@@ -50,6 +50,7 @@ export default function SaleDetail({ saleId, onClose, onChanged }) {
           <div className="sale-meta">
             <StatusBadge tone={sale.status === 'voided' ? 'danger' : 'success'}>{t(`badges.${sale.status}`)}</StatusBadge>
             <span className="text-secondary">{sale.cashier_name} · {t(`paymentMethods.${sale.payment_method}`, { defaultValue: sale.payment_method.replace('_', ' ') })}</span>
+            {sale.customer_name && <span className="text-secondary">{t('saleDetail.customer', { name: sale.customer_name })}</span>}
           </div>
 
           <ul className="line-items-list" aria-label={t('saleDetail.items')}>
@@ -84,7 +85,7 @@ export default function SaleDetail({ saleId, onClose, onChanged }) {
       )}
 
       {returningItem && (
-        <ReturnModal saleItem={returningItem} onClose={() => setReturningItem(null)}
+        <ReturnModal saleItem={returningItem} saleMethod={sale.payment_method} onClose={() => setReturningItem(null)}
           onRecorded={(amount) => {
             setReturningItem(null);
             toast.success(t('saleDetail.refunded', { amount: formatRwf(amount) }));

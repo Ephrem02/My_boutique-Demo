@@ -297,6 +297,8 @@ export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
 function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
   const { t } = useTranslation();
   const isRefund = mode === 'refund';
+  const settleable = isRefund ? invoice.returns.filter((r) => kind === 'supplier' || r.status === 'approved') : [];
+  const [returnId, setReturnId] = useState(settleable.length === 1 ? String(settleable[0].id) : '');
   const limit = isRefund ? -invoice.balance : invoice.balance;
   const [amount, setAmount] = useState(limit > 0 ? String(limit) : '');
   const [method, setMethod] = useState(kind === 'supplier' && !isRefund ? 'bank_transfer' : 'cash');
@@ -312,6 +314,7 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
     try {
       await client.post(financeUrl(kind, `/invoices/${invoice.id}/${isRefund ? 'refunds' : 'payments'}`), {
         amount: Number(amount), method, reference_no: reference || undefined, txn_date: txnDate, note: note || undefined,
+        return_id: returnId ? Number(returnId) : undefined,
       });
       onDone(Number(amount));
     } catch (err) {
@@ -337,6 +340,16 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
       {error && <ErrorState error={error} action={t('errors.actions.payment')} />}
       <MoneyFields amount={amount} setAmount={setAmount} method={method} setMethod={setMethod} reference={reference} setReference={setReference} autoFocus
         hint={!isRefund && Number(amount) > limit ? t('payment.overpaymentWarning') : undefined} />
+      {settleable.length > 0 && (
+        <Field label={t('finance.settlesReturn')}>
+          <Select value={returnId} onChange={(e) => setReturnId(e.target.value)}>
+            <option value="">{t('finance.noSpecificReturn')}</option>
+            {settleable.map((r) => (
+              <option key={r.id} value={r.id}>{t('finance.returnOption', { id: r.id, date: formatDate(r.return_date), amount: formatRwf(r.total_value) })}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
       <div className="form-row">
         <Field label={isRefund ? t('finance.dateOfRefund') : t('payment.datePaid')} required>
           <Input type="date" value={txnDate} max={todayIso()} onChange={(e) => setTxnDate(e.target.value)} required />
@@ -355,6 +368,21 @@ function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
   const source = sources.find((s) => String(s.id) === sourceId);
   const max = source ? Math.min(-source.balance, invoice.balance) : 0;
   const [amount, setAmount] = useState(String(max || ''));
+  const [sourceReturns, setSourceReturns] = useState([]);
+  const [returnId, setReturnId] = useState('');
+
+  // The returns on the chosen source invoice - the credit usually comes from one of them
+  useEffect(() => {
+    if (!sourceId) return;
+    setReturnId('');
+    client.get(financeUrl(kind, `/invoices/${sourceId}`))
+      .then(({ data }) => {
+        const list = data.returns.filter((r) => kind === 'supplier' || r.status === 'approved');
+        setSourceReturns(list);
+        if (list.length === 1) setReturnId(String(list[0].id));
+      })
+      .catch(() => setSourceReturns([]));
+  }, [kind, sourceId]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -362,7 +390,9 @@ function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
     setError(null);
     setLoading(true);
     try {
-      await client.post(financeUrl(kind, `/invoices/${invoice.id}/credits`), { source_invoice_id: Number(sourceId), amount: Number(amount) });
+      await client.post(financeUrl(kind, `/invoices/${invoice.id}/credits`), {
+        source_invoice_id: Number(sourceId), amount: Number(amount), return_id: returnId ? Number(returnId) : undefined,
+      });
       onDone(Number(amount));
     } catch (err) {
       setError(err);
@@ -388,6 +418,16 @@ function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
       <Field label={t('payment.amountRwf')} required hint={t('finance.atMost', { amount: formatRwf(max) })}>
         <Input type="number" inputMode="numeric" min="1" step="1" max={max} value={amount} onChange={(e) => setAmount(e.target.value)} required />
       </Field>
+      {sourceReturns.length > 0 && (
+        <Field label={t('finance.creditFromReturn')}>
+          <Select value={returnId} onChange={(e) => setReturnId(e.target.value)}>
+            <option value="">{t('finance.noSpecificReturn')}</option>
+            {sourceReturns.map((r) => (
+              <option key={r.id} value={r.id}>{t('finance.returnOption', { id: r.id, date: formatDate(r.return_date), amount: formatRwf(r.total_value) })}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
     </Dialog>
   );
 }
@@ -657,6 +697,7 @@ export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
                     <th scope="col">{t('finance.referenceNo')}</th>
                     <th scope="col">{t('finance.recordedBy')}</th>
                     <th scope="col" className="align-right">{t('payment.amount')}</th>
+                    <th scope="col" className="align-right">{t('finance.balanceAfter')}</th>
                     {canManageLedger && <th scope="col"><span className="sr-only">{t('common.actions')}</span></th>}
                   </tr>
                 </thead>
@@ -673,6 +714,7 @@ export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
                       <td>{x.reference_no || '—'}</td>
                       <td>{x.recorded_by_name}</td>
                       <td className="align-right num">{formatRwf(x.amount)}</td>
+                      <td className="align-right num">{x.balance_after === undefined ? '—' : formatRwf(x.balance_after)}</td>
                       {canManageLedger && (
                         <td className="align-right">
                           {x.type !== 'reversal' && !x.reversed_by && (
@@ -705,9 +747,16 @@ export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
                   </div>
                   <div className="record-card-amounts num">
                     <span>{t('finance.returnValue')}: <strong>{formatRwf(r.total_value)}</strong></span>
-                    {r.refund_amount > 0 && <span>{t('finance.refunded')}: {formatRwf(r.refund_amount)} ({t(`paymentMethods.${r.refund_method}`)})</span>}
+                    {r.balance_after !== undefined && <span>{t('finance.balanceAfter')}: {formatRwf(r.balance_after)}</span>}
                     <span>{t('finance.recordedBy')}: {r.recorded_by_name}</span>
                   </div>
+                  {r.settlements?.length > 0 && (
+                    <p className="text-secondary">
+                      {t('finance.settledBy')}: {r.settlements.map((x) => (x.type === 'refund'
+                        ? t('finance.settledRefund', { amount: formatRwf(x.amount), method: t(`paymentMethods.${x.method}`) })
+                        : t('finance.settledCredit', { amount: formatRwf(x.amount), id: x.invoice_id }))).join(', ')}
+                    </p>
+                  )}
                   <p className="text-secondary">{r.items.map((i) => `${i.quantity} × ${i.product_name}${i.restock === false ? ` (${t('finance.writtenOff')})` : ''}`).join(', ')}</p>
                   {r.notes && <p className="text-secondary">{r.notes}</p>}
                   {(r.decision_note || r.response_note) && <p className="text-secondary">{r.decided_by_name || r.responded_by_name}: {r.decision_note || r.response_note}</p>}
@@ -843,6 +892,7 @@ export function PartyDetail({ kind, id, onClose }) {
           <Tabs label={t('finance.accountTabs')} value={tab} onChange={setTab} items={[
             { id: 'invoices', label: t(`${cfg.ns}.records`), count: invoices?.length },
             { id: 'statement', label: t('finance.statement') },
+            ...(party?.till_sales ? [{ id: 'till', label: t('finance.tillPurchases'), count: party.till_sales.length }] : []),
           ]} />
         </>
       )}
@@ -905,6 +955,36 @@ export function PartyDetail({ kind, id, onClose }) {
                     <td>{e.method ? t(`paymentMethods.${e.method}`, { defaultValue: e.method }) : '—'}</td>
                     <td className="align-right num">{e.effect ? signed(e.effect) : '—'}</td>
                     <td className="align-right num">{formatRwf(e.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {summary && tab === 'till' && (
+        party.till_sales.length === 0 ? <p className="text-secondary">{t('finance.noTillPurchases')}</p> : (
+          <div className="table-wrap">
+            <table className="table">
+              <caption className="sr-only">{t('finance.tillPurchases')}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">{t('common.date')}</th>
+                  <th scope="col">{t('salesHistory.saleNo')}</th>
+                  <th scope="col">{t('payment.method')}</th>
+                  <th scope="col">{t('finance.soldBy')}</th>
+                  <th scope="col" className="align-right">{t('common.total')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {party.till_sales.map((sale) => (
+                  <tr key={sale.id} className={sale.status === 'voided' ? 'txn-reversed' : undefined}>
+                    <td>{formatDate(sale.created_at)}</td>
+                    <td>#{sale.id}{sale.status === 'voided' && <> <StatusBadge tone="neutral">{t('badges.voided')}</StatusBadge></>}</td>
+                    <td>{t(`paymentMethods.${sale.payment_method}`, { defaultValue: sale.payment_method })}</td>
+                    <td>{sale.cashier_name}</td>
+                    <td className="align-right num">{formatRwf(sale.total_amount)}</td>
                   </tr>
                 ))}
               </tbody>

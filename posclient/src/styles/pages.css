@@ -1291,6 +1291,11 @@ a.attention-item:hover .attention-text {
   grid-column: 1 / -1;
 }
 
+/* Till: optional customer / on-account fields above the payment methods */
+.cart-customer {
+  margin-bottom: var(--space-2);
+}
+
 /* ---------------- Supplier & customer ledger ---------------- */
 
 .ledger-summary {

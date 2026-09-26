@@ -15,7 +15,14 @@ async function getOne(req, res) {
   if (!institution) return res.status(404).json({ error: 'Institution not found' });
 
   const orders = await ledger.listInvoices({ s: SIDES.customer, partyId: institution.id });
-  res.json({ ...institution, orders });
+  // Paid till sales where the cashier named this customer (their purchase history)
+  const tillSales = await db('sales')
+    .where({ institution_id: institution.id })
+    .join('users', 'users.id', 'sales.cashier_id')
+    .select('sales.id', 'sales.created_at', 'sales.total_amount', 'sales.payment_method', 'sales.status', 'users.full_name as cashier_name')
+    .orderBy('sales.id', 'desc')
+    .limit(100);
+  res.json({ ...institution, orders, till_sales: tillSales.map((s) => ({ ...s, total_amount: Number(s.total_amount) })) });
 }
 
 async function create(req, res) {

@@ -16,6 +16,7 @@ import { PageHeader, Panel, Metric, StatusBadge, EmptyState, SkeletonPanel, Erro
 import Button from '../ui/Button';
 import { useToast } from '../ui/Toast';
 import { formatRwf, formatDate, formatTime, formatPercentChange, formatNumber } from '../ui/format';
+import DocumentActions from '../components/documents/DocumentActions';
 
 /** "Needs attention" - only things that exist, most severe first. */
 function attentionItems({ data, t, hasPermission, unread }) {
@@ -128,6 +129,9 @@ function TodaySales({ today, comparison }) {
           {t('dashboard.fullDayNote', { sales: formatRwf(comparison.last_full_day.sales), count: comparison.last_full_day.transactions })}
         </p>
       )}
+      <div className="panel-footer-actions">
+        <DocumentActions size="sm" path={`/documents/daily/${today.day.id}`} filename={`daily-report-${today.day.business_date}.pdf`} printLabel={t('documents.printDailyReport')} />
+      </div>
     </Panel>
   );
 }

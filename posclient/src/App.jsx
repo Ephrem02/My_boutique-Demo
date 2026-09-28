@@ -27,6 +27,9 @@ import EmailTab from './pages/admin/EmailTab';
 import DeliveriesTab from './pages/admin/DeliveriesTab';
 import AuditTab from './pages/admin/AuditTab';
 import ClosingTab from './pages/admin/ClosingTab';
+import BusinessTab from './pages/admin/BusinessTab';
+import EmployeeProfile from './pages/EmployeeProfile';
+import Proformas from './pages/Proformas';
 import { ADMIN_PERMISSIONS } from './navigation';
 
 function ProtectedRoute({ children }) {
@@ -66,6 +69,9 @@ export default function App() {
         <Route path="/finance" element={guard(['reports.financial.view'], <Finance />)} />
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/my-activity" element={<EmployeeProfile self key="me" />} />
+        <Route path="/employees/:id" element={guard(['employees.manage'], <EmployeeProfile key="other" />)} />
+        <Route path="/proformas" element={guard(['institution_orders.view'], <Proformas />)} />
         <Route path="/closing/corrections" element={guard(['day.corrections.request', 'day.review'], <Corrections />)} />
         <Route path="/business-days" element={guard(['day.history.view'], <BusinessDayHistory />)} />
         <Route path="/business-days/:id" element={guard(['day.history.view'], <BusinessDayDetail />)} />
@@ -74,6 +80,7 @@ export default function App() {
           <Route index element={<AdminHome />} />
           <Route path="monitoring" element={guard(['notifications.manage'], <OverviewTab />)} />
           <Route path="closing" element={guard(['settings.manage'], <ClosingTab />)} />
+          <Route path="business" element={guard(['settings.manage'], <BusinessTab />)} />
           <Route path="users" element={guard(['employees.manage'], <Employees />)} />
           <Route path="notifications" element={<LegacyAdminRedirect />} />
           <Route path="notifications/rules" element={guard(['notifications.manage'], <RulesTab />)} />

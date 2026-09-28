@@ -1,6 +1,6 @@
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Activity, BellRing, CalendarClock, ChevronRight, FileText, Mail, Send, ShieldCheck, Users, Megaphone } from 'lucide-react';
+import { Activity, BellRing, Building, CalendarClock, ChevronRight, FileText, Mail, Send, ShieldCheck, Users, Megaphone } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PageHeader } from '../../ui/display';
 
@@ -8,6 +8,7 @@ import { PageHeader } from '../../ui/display';
 // Every section's API enforces its own permission; hiding is convenience.
 export const ADMIN_SECTIONS = [
   { id: 'monitoring', to: '/admin/monitoring', icon: Activity, anyOf: ['notifications.manage'], group: 'overview' },
+  { id: 'business', to: '/admin/business', icon: Building, anyOf: ['settings.manage'], group: 'business' },
   { id: 'closing', to: '/admin/closing', icon: CalendarClock, anyOf: ['settings.manage'], group: 'business' },
   { id: 'users', to: '/admin/users', icon: Users, anyOf: ['employees.manage'], group: 'business' },
   { id: 'rules', to: '/admin/notifications/rules', icon: BellRing, anyOf: ['notifications.manage'], group: 'notifications' },

@@ -90,6 +90,7 @@ export default function StatementPrint({ kind, party, statement, from, to, onClo
           </div>
         </dl>
         <p className="receipt-footer">{t('profile.statementFooter')}</p>
+        <p className="receipt-footer">{t('documents.notTaxInvoice')}</p>
       </div>
     </Dialog>
   );

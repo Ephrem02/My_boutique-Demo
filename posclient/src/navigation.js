@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, ShoppingCart, ReceiptText, Package, Boxes, Truck, Building2, Bell, BarChart3,
-  CalendarCheck2, FileCheck2, Settings2, MoreHorizontal, Landmark,
+  CalendarCheck2, FileCheck2, Settings2, MoreHorizontal, Landmark, FileText,
 } from 'lucide-react';
 
 // Single source for navigation. `anyOf` hides links the user can't use -
@@ -18,6 +18,7 @@ export const NAV_GROUPS = [
       { id: 'stock', to: '/stock', icon: Boxes, anyOf: ['stock.view'] },
       { id: 'suppliers', to: '/suppliers', icon: Truck, anyOf: ['suppliers.view'] },
       { id: 'clients', to: '/institutions', icon: Building2, anyOf: ['institutions.view'] },
+      { id: 'proformas', to: '/proformas', icon: FileText, anyOf: ['institution_orders.view'] },
       { id: 'notifications', to: '/notifications', icon: Bell, anyOf: null },
     ],
   },

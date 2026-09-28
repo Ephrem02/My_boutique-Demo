@@ -145,10 +145,13 @@ export default function Employees() {
     {
       key: 'actions', header: <span className="sr-only">{t('common.actions')}</span>, mobile: 'meta',
       render: (e) => (
-        <Button size="sm" onClick={() => setDialog(e)} disabled={e.id === user.id} title={e.id === user.id ? t('employees.ownAccountHint') : undefined}
-          aria-label={t('employees.editNamed', { name: e.full_name })}>
-          {t('common.edit')}
-        </Button>
+        <span className="record-card-actions">
+          <Button size="sm" to={`/employees/${e.id}`} aria-label={t('employee360.openNamed', { name: e.full_name })}>{t('employee360.open')}</Button>
+          <Button size="sm" onClick={() => setDialog(e)} disabled={e.id === user.id} title={e.id === user.id ? t('employees.ownAccountHint') : undefined}
+            aria-label={t('employees.editNamed', { name: e.full_name })}>
+            {t('common.edit')}
+          </Button>
+        </span>
       ),
     },
   ];

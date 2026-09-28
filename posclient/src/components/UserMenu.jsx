@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
+import { Activity, ChevronDown, LogOut, Monitor, Moon, Settings, Sun } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -102,6 +102,10 @@ export default function UserMenu() {
           </div>
 
           <div className="user-menu-links">
+            <Link to="/my-activity" className="menu-item" onClick={() => setOpen(false)}>
+              <Activity aria-hidden="true" />
+              {t('employee360.myTitle')}
+            </Link>
             <Link to="/settings" className="menu-item" onClick={() => setOpen(false)}>
               <Settings aria-hidden="true" />
               {t('shell.settings')}

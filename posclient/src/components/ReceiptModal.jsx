@@ -109,6 +109,7 @@ export default function ReceiptModal({ type, id, onClose }) {
             </>
           )}
           <div className="receipt-footer">{t('receipts.issuedBy', { name: user?.full_name, date: formatDateTime(new Date()) })}</div>
+          <div className="receipt-footer">{t('documents.notTaxInvoice')}</div>
         </div>
       )}
     </Dialog>

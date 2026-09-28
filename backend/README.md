@@ -120,6 +120,26 @@ Retry with one of:
 
 Blocked clients get no new sales on account. They can still pay what they owe.
 
+## Documents API: reports and proformas
+
+The system does not issue tax invoices; official invoices come from EBM.
+Documents are built on the server from stored records. `?format=pdf`
+returns the PDF (pdfmake, A4, "Page x of y"); otherwise the same data comes
+back as JSON. PDFs are sent as `application/octet-stream` with
+`X-Document-Type: application/pdf` and `X-Document-Filename`. This is because
+a browser without a PDF viewer (headless Chrome) hijacks PDF responses to
+script requests. Every PDF download is audited as `document.download`.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/documents/daily/:dayId` | `day.history.view`; or `day.view` for the day in progress | Closed days print from the closing snapshot. Revenue (till, sold on account) is kept apart from collections (ledger, by method). Per-cashier figures are for managers only |
+| `GET /api/documents/employees/:id?from=&to=` (`me` = self) | `employees.manage`, or self | Employee 360° for shop dates. The audit trail requires `audit.view` |
+| `GET/PUT /api/documents/settings` | read: any; write: `settings.manage` | Business name, TIN, contacts, footer, default proforma terms (audited) |
+| `GET /api/proformas?status=issued\|expired\|converted\|cancelled` | `institution_orders.view` | `state` shows `expired` when an issued proforma is past `valid_until` |
+| `POST /api/proformas` `{institution_id \| customer_name, valid_until, items, discount_amount, payment_terms}` | `institution_orders.manage` | No sale, stock or debt. Number `PRO-YYYY-NNNNNN` comes from a locked counter, so numbers are never reused. Lines are immutable |
+| `POST /api/proformas/:id/convert` `{institution_id?, due_date, payment, credit_*}` | `institution_orders.manage` | Makes the real sale via `createOrder` in the same transaction (credit limits apply). It can be done once, and never on an expired proforma |
+| `POST /api/proformas/:id/cancel` `{reason}` | `institution_orders.manage` | |
+
 ## Setup
 
 1. Install PostgreSQL locally (or use a hosted instance) and create a database:

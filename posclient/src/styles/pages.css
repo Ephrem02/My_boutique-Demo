@@ -1417,6 +1417,33 @@ a.attention-item:hover .attention-text {
   margin-bottom: 0;
 }
 
+/* Preview & print / Download PDF, side by side in headers and panels */
+.document-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Proforma shown in its dialog; printed alone like a receipt */
+.proforma-sheet {
+  margin: var(--space-3) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.proforma-sheet p {
+  margin: 0 0 var(--space-2);
+}
+
+@media print {
+  .proforma-sheet {
+    padding: 0;
+    border: 0;
+  }
+}
+
 /* Finance overview: panels side by side on wide screens */
 .finance-grid {
   display: grid;

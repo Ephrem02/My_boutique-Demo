@@ -18,6 +18,8 @@ const SCREENS = [
   ['cashier', '/institutions/1'], ['keeper', '/suppliers/1'], ['manager', '/institutions/1'], ['manager', '/suppliers/1'],
   ['manager', '/institutions/1?tab=payments'], ['manager', '/institutions/1?tab=insights'], ['manager', '/institutions/1?tab=activity'],
   ['manager', '/suppliers/1?tab=products'], ['manager', '/suppliers/1?tab=performance'],
+  // documents: proformas, employee 360°, business details
+  ['cashier', '/proformas'], ['cashier', '/my-activity'], ['manager', '/proformas'], ['manager', '/my-activity'], ['manager', '/admin/business'],
 ];
 
 /** Elements whose right edge is past the viewport, ignoring intentional horizontal scrollers. */

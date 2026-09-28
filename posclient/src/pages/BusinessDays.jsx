@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import DocumentActions from '../components/documents/DocumentActions';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, CalendarCheck2, History } from 'lucide-react';
 import client from '../api/client';
@@ -130,7 +131,12 @@ export function BusinessDayDetail() {
       <PageHeader
         title={board ? dayTitle(t, board.day, { weekday: true }) : t('businessDay.history')}
         subtitle={board ? t(`businessDay.status.${board.day.status}`) : undefined}
-        actions={<Button icon={ArrowLeft} to="/business-days">{t('businessDay.history')}</Button>}
+        actions={(
+          <>
+            <Button icon={ArrowLeft} to="/business-days">{t('businessDay.history')}</Button>
+            {board && <DocumentActions path={`/documents/daily/${board.day.id}`} filename={`daily-report-${board.day.business_date}.pdf`} printLabel={t('documents.printDailyReport')} />}
+          </>
+        )}
       />
       {error && <ErrorState error={error} onRetry={load} />}
       {!board && !error && <div className="dashboard-grid"><SkeletonPanel lines={8} /><SkeletonPanel lines={8} /></div>}

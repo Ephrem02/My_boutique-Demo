@@ -51,7 +51,7 @@ async function setupDbRoles({ environment = process.env.NODE_ENV || 'development
       'supplier_transactions', 'customer_transactions', 'supplier_delivery_items', 'institution_order_items',
       'supplier_return_items', 'customer_return_items',
       // follow-up notes on client/supplier profiles
-      'party_notes']) {
+      'party_notes', 'proforma_items']) {
       if (await owner.schema.hasTable(table)) {
         await owner.raw(`REVOKE ALL ON ${table} FROM ${appUser}`);
         await owner.raw(`GRANT SELECT, INSERT ON ${table} TO ${appUser}`);

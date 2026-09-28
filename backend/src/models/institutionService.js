@@ -28,7 +28,7 @@ const s = SIDES.customer;
  * or creditOverride ({ reason }, a manager approving inline).
  */
 async function createOrder({
-  req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment, fromLocation = 'store_room', creditExceptionId, creditOverride,
+  req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment, fromLocation = 'store_room', creditExceptionId, creditOverride, trx: outerTrx,
 }) {
   if (!items || !items.length) throw new AppError('An order needs at least one item');
   const lines = inLockOrder(items).map((i) => {
@@ -51,7 +51,8 @@ async function createOrder({
   if (!storeRoom) throw new AppError(`${fromLocation} location is not configured`);
   const recordedBy = req.user.id;
 
-  return db.transaction(async (trx) => {
+  // outerTrx: run inside the caller's transaction (e.g. converting a proforma)
+  return (outerTrx || db).transaction(async (trx) => {
     // Locked: concurrent credit sales to the same client are checked one at a time
     const institution = await trx('institutions').where({ id: Number(institutionId) || 0 }).forUpdate().first();
     if (!institution) throw new AppError('Customer not found', 404);

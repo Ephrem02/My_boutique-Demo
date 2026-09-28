@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
@@ -31,6 +31,20 @@ export default function Dialog({
 }) {
   const { t } = useTranslation();
   const panelRef = useRef(null);
+  // A body taller than the dialog scrolls; with nothing focusable inside
+  // (e.g. a printable statement) keyboard users could not scroll it, so it
+  // becomes a focusable region only while it overflows (WCAG 2.1.1).
+  const bodyRef = useRef(null);
+  const [bodyScrolls, setBodyScrolls] = useState(false);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return undefined;
+    const check = () => setBodyScrolls(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  });
   // Capture the opener during the first render - before children commit,
   // because a child's autoFocus moves focus into the dialog before effects run.
   const openerRef = useRef(null);
@@ -98,7 +112,7 @@ export default function Dialog({
           </div>
           {dismissible && <IconButton icon={X} label={t('common.close')} onClick={onClose} className="dialog-close" />}
         </header>
-        <div className="dialog-body">{children}</div>
+        <div className="dialog-body" ref={bodyRef} {...(bodyScrolls && { tabIndex: 0, role: 'region', 'aria-label': title })}>{children}</div>
         {footer && <footer className="dialog-footer">{footer}</footer>}
       </Panel>
     </div>,

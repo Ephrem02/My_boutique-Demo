@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, ChevronsUpDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
 import useBreakpoint from './useBreakpoint';
@@ -45,6 +45,22 @@ export default function DataTable({
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState(initialSort || null); // { key, dir: 'asc'|'desc' }
   const [page, setPage] = useState(1);
+
+  // A table larger than its box scrolls (sideways, or down past the box's max
+  // height); keyboard users can only scroll it if the scroll box itself can
+  // take focus (WCAG 2.1.1). Only then is it made a focusable, labelled
+  // region - no extra tab stop otherwise.
+  const wrapRef = useRef(null);
+  const [scrollable, setScrollable] = useState(false);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const check = () => setScrollable(el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  });
 
   const keyOf = (row) => (typeof rowKey === 'function' ? rowKey(row) : row[rowKey]);
 
@@ -176,7 +192,7 @@ export default function DataTable({
     );
   } else {
     body = (
-      <div className="table-wrap">
+      <div className="table-wrap" ref={wrapRef} {...(scrollable && { tabIndex: 0, role: 'region', 'aria-label': caption })}>
         <table className="table">
           {caption && <caption className="sr-only">{caption}</caption>}
           <thead>

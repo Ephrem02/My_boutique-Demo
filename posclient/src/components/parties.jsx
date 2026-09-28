@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  FileText, Plus, Trash2, Truck, ClipboardList, Phone, Mail, UserRound, CheckCheck, Wallet, Undo2, ArrowLeftRight, RotateCcw, PackageMinus, BookOpen,
+  FileText, Plus, Trash2, Truck, ClipboardList, CheckCheck, Wallet, Undo2, ArrowLeftRight, RotateCcw, PackageMinus,
 } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Dialog from '../ui/Dialog';
 import Button, { IconButton } from '../ui/Button';
 import { Checkbox, Field, Input, Select, Textarea } from '../ui/Field';
-import { Alert, DescriptionList, EmptyState, ErrorState, Metric, SkeletonPanel, StatusBadge, Tabs } from '../ui/display';
+import { DescriptionList, ErrorState, SkeletonPanel, StatusBadge } from '../ui/display';
 import { useToast } from '../ui/Toast';
 import { formatRwf, formatDate } from '../ui/format';
 import ReceiptModal from './ReceiptModal';
@@ -62,60 +62,122 @@ export const KIND = {
   },
 };
 
-const financeUrl = (kind, path) => `/finance/${KIND[kind].side}${path}`;
+export const financeUrl = (kind, path) => `/finance/${KIND[kind].side}${path}`;
 const signed = (v) => formatRwf(v, { signed: true });
 
 /* ---------------- Create supplier / customer ---------------- */
 
-export function PartyFormDialog({ kind, onClose, onCreated }) {
+export const PARTY_STATUSES = { institution: ['active', 'inactive', 'blocked'], supplier: ['active', 'inactive', 'under_review'] };
+export const STATUS_TONE = { active: 'success', inactive: 'neutral', blocked: 'danger', under_review: 'warning' };
+const PARTY_FIELDS = {
+  institution: ['name', 'type', 'status', 'contact_person', 'contact_phone', 'alt_phone', 'contact_email', 'address', 'district', 'sector', 'city', 'country', 'id_number', 'assigned_user_id', 'payment_terms', 'notes'],
+  supplier: ['name', 'category', 'status', 'contact_person', 'contact_phone', 'alt_phone', 'contact_email', 'address', 'district', 'sector', 'city', 'country', 'registration_no', 'tin', 'payment_terms', 'notes'],
+};
+
+/** Create a supplier/client, or edit one (pass `party`). Every change is audited server-side. */
+export function PartyFormDialog({ kind, party, onClose, onCreated, onSaved }) {
   const { t } = useTranslation();
+  const { hasPermission } = useAuth();
   const cfg = KIND[kind];
-  const [form, setForm] = useState(kind === 'supplier'
-    ? { name: '', contact_phone: '', contact_email: '', address: '', payment_terms: '' }
-    : { name: '', type: 'shop', contact_person: '', contact_phone: '', address: '', payment_terms: '' });
+  const editing = !!party;
+  const [form, setForm] = useState(() => Object.fromEntries(PARTY_FIELDS[kind].map((k) => {
+    if (party) return [k, party[k] ?? ''];
+    return [k, { type: 'shop', status: 'active' }[k] ?? ''];
+  })));
+  const [staff, setStaff] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const canAssign = kind === 'institution' && hasPermission('employees.manage');
+
+  useEffect(() => {
+    if (canAssign) client.get('/auth/employees').then(({ data }) => setStaff(data.filter((u) => u.status !== 'inactive' || u.id === party?.assigned_user_id))).catch(() => setStaff([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAssign]);
 
   async function submit() {
     setError(null);
     setLoading(true);
+    const body = { ...form, ...(kind === 'institution' && { assigned_user_id: form.assigned_user_id ? Number(form.assigned_user_id) : null }) };
+    if (!canAssign) delete body.assigned_user_id;
     try {
-      const { data } = await client.post(cfg.endpoint, form);
-      onCreated(data);
+      const { data } = editing ? await client.put(`${cfg.endpoint}/${party.id}`, body) : await client.post(cfg.endpoint, body);
+      (editing ? onSaved : onCreated)(data);
     } catch (err) {
       setError(err);
       setLoading(false);
     }
   }
 
+  const text = (key, label, props = {}) => <Field label={label} hint={props.hint}><Input value={form[key]} onChange={set(key)} maxLength={props.max || 255} type={props.type} /></Field>;
   return (
-    <Dialog title={t(`${cfg.ns}.newTitle`)} onClose={onClose} onSubmit={submit}
+    <Dialog title={editing ? t('profile.editTitle', { name: party.name }) : t(`${cfg.ns}.newTitle`)} size="lg" onClose={onClose} onSubmit={submit}
       footer={(
         <>
           <Button onClick={onClose}>{t('common.cancel')}</Button>
-          <Button type="submit" variant="primary" loading={loading} loadingText={t('common.saving')}>{t(`${cfg.ns}.add`)}</Button>
+          <Button type="submit" variant="primary" loading={loading} loadingText={t('common.saving')}>{editing ? t('common.save') : t(`${cfg.ns}.add`)}</Button>
         </>
       )}
     >
       {error && <ErrorState error={error} />}
-      <Field label={t('common.name')} required><Input value={form.name} onChange={set('name')} required autoFocus /></Field>
-      {kind === 'institution' && (
-        <div className="form-row">
+      <Field label={kind === 'supplier' ? t('profile.companyName') : t('common.name')} required><Input value={form.name} onChange={set('name')} required autoFocus maxLength={255} /></Field>
+      <div className="form-row">
+        {kind === 'institution' ? (
           <Field label={t('institutions.type')}>
             <Select value={form.type} onChange={set('type')}>
               {CLIENT_TYPES.map((ct) => <option key={ct} value={ct}>{t(`institutions.types.${ct}`)}</option>)}
             </Select>
           </Field>
-          <Field label={t('institutions.contactPerson')}><Input value={form.contact_person} onChange={set('contact_person')} /></Field>
+        ) : text('category', t('profile.category'), { hint: t('profile.categoryHint'), max: 100 })}
+        <Field label={t('profile.status')} hint={form.status === 'blocked' ? t('profile.blockedHint') : undefined}>
+          <Select value={form.status} onChange={set('status')}>
+            {PARTY_STATUSES[kind].map((st) => <option key={st} value={st}>{t(`profile.statuses.${st}`)}</option>)}
+          </Select>
+        </Field>
+      </div>
+
+      <div className="form-section-title">{t('profile.contact')}</div>
+      <div className="form-row">
+        {text('contact_person', t('institutions.contactPerson'))}
+        {text('contact_email', t('suppliers.contactEmail'), { type: 'email' })}
+      </div>
+      <div className="form-row">
+        {text('contact_phone', t('suppliers.contactPhone'), { type: 'tel' })}
+        {text('alt_phone', t('profile.altPhone'), { type: 'tel' })}
+      </div>
+
+      <div className="form-section-title">{t('profile.addressSection')}</div>
+      {text('address', t('suppliers.address'))}
+      <div className="form-row">
+        {text('district', t('profile.district'))}
+        {text('sector', t('profile.sector'))}
+      </div>
+      <div className="form-row">
+        {text('city', t('profile.city'))}
+        {text('country', t('profile.country'))}
+      </div>
+
+      <div className="form-section-title">{t('profile.businessSection')}</div>
+      {kind === 'institution' ? (
+        <div className="form-row">
+          {text('id_number', t('profile.idNumber'), { hint: t('profile.idNumberHint'), max: 64 })}
+          {canAssign && (
+            <Field label={t('profile.assignedStaff')} hint={t('profile.assignedStaffHint')}>
+              <Select value={form.assigned_user_id ?? ''} onChange={set('assigned_user_id')}>
+                <option value="">{t('profile.nobody')}</option>
+                {staff.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              </Select>
+            </Field>
+          )}
+        </div>
+      ) : (
+        <div className="form-row">
+          {text('registration_no', t('profile.registrationNo'), { max: 64 })}
+          {text('tin', t('profile.tin'), { max: 64 })}
         </div>
       )}
-      <div className="form-row">
-        <Field label={t('suppliers.contactPhone')}><Input type="tel" value={form.contact_phone} onChange={set('contact_phone')} /></Field>
-        {kind === 'supplier' && <Field label={t('suppliers.contactEmail')}><Input type="email" value={form.contact_email} onChange={set('contact_email')} /></Field>}
-      </div>
-      <Field label={t('suppliers.address')}><Input value={form.address} onChange={set('address')} /></Field>
-      <Field label={t('common.paymentTerms')} hint={t('suppliers.paymentTermsPlaceholder')}><Input value={form.payment_terms} onChange={set('payment_terms')} /></Field>
+      <Field label={t('common.paymentTerms')} hint={t('suppliers.paymentTermsPlaceholder')}><Input value={form.payment_terms} onChange={set('payment_terms')} maxLength={500} /></Field>
+      <Field label={t('profile.notesField')} hint={t('profile.notesFieldHint')}><Textarea value={form.notes} onChange={set('notes')} rows={3} maxLength={2000} /></Field>
     </Dialog>
   );
 }
@@ -362,7 +424,7 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
 
 /* ---------------- Pay the account (spread over owed invoices, oldest first) ---------------- */
 
-function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, onDone }) {
+export function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, onDone }) {
   const { t } = useTranslation();
   const [amount, setAmount] = useState(String(owed));
   const [method, setMethod] = useState(kind === 'supplier' ? 'bank_transfer' : 'cash');
@@ -888,189 +950,6 @@ export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
           }} />
       )}
       {dialog?.type === 'receipt' && <ReceiptModal type={cfg.receiptType} id={invoice.id} onClose={() => setDialog(null)} />}
-    </Dialog>
-  );
-}
-
-/* ---------------- Account: summary, invoices and statement ---------------- */
-
-export function PartyDetail({ kind, id, onClose }) {
-  const { t } = useTranslation();
-  const toast = useToast();
-  const { hasPermission } = useAuth();
-  const cfg = KIND[kind];
-  const [party, setParty] = useState(null);
-  const [statement, setStatement] = useState(null);
-  const [tab, setTab] = useState('invoices');
-  const [error, setError] = useState(null);
-  const [dialog, setDialog] = useState(null); // { type: 'record' | 'invoice', id? }
-  const canSeeMoney = hasPermission(cfg.moneyView);
-
-  const load = useCallback(async () => {
-    try {
-      const [{ data: partyData }, statementRes] = await Promise.all([
-        client.get(`${cfg.endpoint}/${id}`),
-        canSeeMoney ? client.get(financeUrl(kind, `/parties/${id}/statement`)) : Promise.resolve(null),
-      ]);
-      setParty(partyData);
-      setStatement(statementRes?.data || null);
-      setError(null);
-    } catch (err) {
-      setError(err);
-    }
-  }, [cfg, id, kind, canSeeMoney]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const invoices = party ? (party.deliveries || party.orders || []) : null;
-  const summary = statement?.summary;
-  const canPayAccount = summary?.owed > 0 && hasPermission(cfg.payManage);
-  const RecordIcon = cfg.recordIcon;
-  return (
-    <Dialog title={party?.name || t('common.loading')} description={party?.payment_terms || undefined} size="lg" onClose={onClose}
-      footer={(hasPermission(cfg.recordManage) || canPayAccount) ? (
-        <>
-          {canPayAccount && <Button icon={Wallet} onClick={() => setDialog({ type: 'payAccount' })}>{t('finance.payAccount')}</Button>}
-          {hasPermission(cfg.recordManage) && <Button variant="primary" icon={Plus} onClick={() => setDialog({ type: 'record' })}>{t(`${cfg.ns}.recordNew`)}</Button>}
-        </>
-      ) : null}
-    >
-      {error && <ErrorState error={error} onRetry={load} />}
-      {!party && !error && <SkeletonPanel lines={5} />}
-      {party && (
-        <ul className="contact-list">
-          {kind === 'institution' && <li><StatusBadge tone="neutral" dot={false}>{t(`institutions.types.${party.type}`, { defaultValue: party.type })}</StatusBadge></li>}
-          {party.contact_person && <li><UserRound aria-hidden="true" />{party.contact_person}</li>}
-          {party.contact_phone && <li><Phone aria-hidden="true" /><a href={`tel:${party.contact_phone}`}>{party.contact_phone}</a></li>}
-          {party.contact_email && <li><Mail aria-hidden="true" /><a href={`mailto:${party.contact_email}`}>{party.contact_email}</a></li>}
-        </ul>
-      )}
-
-      {summary && (
-        <>
-          <div className="ledger-summary">
-            <Metric label={t(`finance.${cfg.side}.owed`)} value={formatRwf(summary.owed)} tone={summary.owed > 0 ? 'danger' : undefined} />
-            <Metric label={t('finance.overdue')} value={formatRwf(summary.overdue)} hint={summary.overdue_count ? t('finance.invoicesCount', { count: summary.overdue_count }) : undefined}
-              tone={summary.overdue > 0 ? 'danger' : undefined} />
-            <Metric label={t(`finance.${cfg.side}.credit`)} value={formatRwf(summary.credit)} />
-            <Metric label={t('finance.totalPaid')} value={formatRwf(summary.paid)} hint={t('finance.ofInvoiced', { amount: formatRwf(summary.invoiced) })} />
-          </div>
-          {summary.pending_returns > 0 && <Alert tone="warning" title={t('finance.pendingReturns', { count: summary.pending_returns })} />}
-          <Tabs label={t('finance.accountTabs')} value={tab} onChange={setTab} items={[
-            { id: 'invoices', label: t(`${cfg.ns}.records`), count: invoices?.length },
-            { id: 'statement', label: t('finance.statement') },
-            ...(party?.till_sales ? [{ id: 'till', label: t('finance.tillPurchases'), count: party.till_sales.length }] : []),
-          ]} />
-        </>
-      )}
-      {!summary && <h3 className="subheading">{t(`${cfg.ns}.records`)}</h3>}
-
-      {(tab === 'invoices' || !summary) && invoices && invoices.length === 0 && (
-        <EmptyState compact icon={RecordIcon} title={t(`${cfg.ns}.noRecords`)} description={t(`${cfg.ns}.noRecordsHint`)} />
-      )}
-      {(tab === 'invoices' || !summary) && invoices && invoices.length > 0 && (
-        <ul className="record-list">
-          {invoices.map((r) => (
-            <li key={r.id} className="record-card">
-              <div className="record-card-top">
-                <span className="record-card-title">#{r.id} · {formatDate(r.invoice_date)}{r.reference_no ? ` · ${r.reference_no}` : ''}</span>
-                <span className="record-card-badges">
-                  <StatusBadge tone={INVOICE_TONE[r.status]}>{t(`badges.${r.status}`)}</StatusBadge>
-                  {r.overdue && <StatusBadge tone="danger">{t('finance.overdue')}</StatusBadge>}
-                  {kind === 'institution' && r.delivery_status === 'pending' && <StatusBadge tone="neutral">{t('badges.pendingDelivery')}</StatusBadge>}
-                </span>
-              </div>
-              <div className="record-card-amounts num">
-                <span>{t('common.total')}: <strong>{formatRwf(r.total_amount)}</strong></span>
-                {r.returns_total > 0 && <span>{t('finance.returns')}: {formatRwf(r.returns_total)}</span>}
-                <span>{t('finance.paid')}: {formatRwf(r.amount_paid)}</span>
-                {r.balance > 0 && <span className="text-danger">{t('receipts.balanceDue')}: {formatRwf(r.balance)}</span>}
-                {r.balance < 0 && <span className="text-info">{t('finance.creditBalance')}: {formatRwf(-r.balance)}</span>}
-              </div>
-              <div className="record-card-actions">
-                <Button size="sm" icon={BookOpen} onClick={() => setDialog({ type: 'invoice', id: r.id })}>{t('finance.openInvoice')}</Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {summary && tab === 'statement' && (
-        statement.entries.length === 0 ? <p className="text-secondary">{t('finance.noTransactions')}</p> : (
-          <div className="table-wrap">
-            <table className="table">
-              <caption className="sr-only">{t('finance.statement')}</caption>
-              <thead>
-                <tr>
-                  <th scope="col">{t('common.date')}</th>
-                  <th scope="col">{t('finance.entryType')}</th>
-                  <th scope="col">{t('payment.method')}</th>
-                  <th scope="col" className="align-right">{t('finance.change')}</th>
-                  <th scope="col" className="align-right">{t('finance.runningBalance')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {statement.entries.map((e) => (
-                  <tr key={e.id} className={e.reversed ? 'txn-reversed' : undefined}>
-                    <td>{formatDate(e.date)}</td>
-                    <td>
-                      <button type="button" className="link-button" onClick={() => setDialog({ type: 'invoice', id: e.invoice_id })}>
-                        {e.kind === 'refund' ? t(kind === 'supplier' ? 'finance.entry.supplierRefund' : 'finance.entry.customerRefund') : t(`finance.entry.${e.kind}`)} · #{e.invoice_id}
-                      </button>
-                      {e.reason && <span className="text-muted"> · {t(`finance.reasons.${e.reason}`)}</span>}
-                    </td>
-                    <td>{e.method ? t(`paymentMethods.${e.method}`, { defaultValue: e.method }) : '—'}</td>
-                    <td className="align-right num">{e.effect ? signed(e.effect) : '—'}</td>
-                    <td className="align-right num">{formatRwf(e.balance)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      )}
-
-      {summary && tab === 'till' && (
-        party.till_sales.length === 0 ? <p className="text-secondary">{t('finance.noTillPurchases')}</p> : (
-          <div className="table-wrap">
-            <table className="table">
-              <caption className="sr-only">{t('finance.tillPurchases')}</caption>
-              <thead>
-                <tr>
-                  <th scope="col">{t('common.date')}</th>
-                  <th scope="col">{t('salesHistory.saleNo')}</th>
-                  <th scope="col">{t('payment.method')}</th>
-                  <th scope="col">{t('finance.soldBy')}</th>
-                  <th scope="col" className="align-right">{t('common.total')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {party.till_sales.map((sale) => (
-                  <tr key={sale.id} className={sale.status === 'voided' ? 'txn-reversed' : undefined}>
-                    <td>{formatDate(sale.created_at)}</td>
-                    <td>#{sale.id}{sale.status === 'voided' && <> <StatusBadge tone="neutral">{t('badges.voided')}</StatusBadge></>}</td>
-                    <td>{t(`paymentMethods.${sale.payment_method}`, { defaultValue: sale.payment_method })}</td>
-                    <td>{sale.cashier_name}</td>
-                    <td className="align-right num">{formatRwf(sale.total_amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      )}
-
-      {dialog?.type === 'record' && (
-        <LineItemsDialog kind={kind} partyId={id} onClose={() => setDialog(null)}
-          onRecorded={() => { setDialog(null); toast.success(t(`${cfg.ns}.recorded`)); load(); }} />
-      )}
-      {dialog?.type === 'payAccount' && (
-        <AccountPaymentDialog kind={kind} partyId={id} invoices={statement.invoices} owed={summary.owed} onClose={() => setDialog(null)}
-          onDone={(data) => { setDialog(null); toast.success(t('finance.payAccountRecorded', { amount: formatRwf(data.amount), count: data.allocations.length })); load(); }} />
-      )}
-      {dialog?.type === 'invoice' && <InvoiceDetail kind={kind} invoiceId={dialog.id} onClose={() => setDialog(null)} onChanged={load} />}
     </Dialog>
   );
 }

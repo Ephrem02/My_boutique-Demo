@@ -25,11 +25,15 @@ function ApprovalLimit() {
   const { t } = useTranslation();
   const toast = useToast();
   const [value, setValue] = useState('');
+  const [inactiveDays, setInactiveDays] = useState('');
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    client.get('/finance/settings').then(({ data }) => setValue(String(data.customer_return_approval_rwf))).catch(setError);
+    client.get('/finance/settings').then(({ data }) => {
+      setValue(String(data.customer_return_approval_rwf));
+      setInactiveDays(String(data.inactive_customer_days));
+    }).catch(setError);
   }, []);
 
   async function save(e) {
@@ -37,8 +41,9 @@ function ApprovalLimit() {
     setSaving(true);
     setError(null);
     try {
-      const { data } = await client.put('/finance/settings', { customer_return_approval_rwf: Number(value) });
+      const { data } = await client.put('/finance/settings', { customer_return_approval_rwf: Number(value), inactive_customer_days: Number(inactiveDays) });
       setValue(String(data.customer_return_approval_rwf));
+      setInactiveDays(String(data.inactive_customer_days));
       toast.success(t('finance.settingsSaved'));
     } catch (err) {
       setError(err);
@@ -52,6 +57,9 @@ function ApprovalLimit() {
       <form onSubmit={save} className="stack">
         <Field label={t('finance.approvalLimit')} hint={t('finance.approvalLimitHint')}>
           <Input type="number" inputMode="numeric" min="0" step="1" value={value} onChange={(e) => setValue(e.target.value)} />
+        </Field>
+        <Field label={t('finance.inactiveDays')} hint={t('finance.inactiveDaysHint')}>
+          <Input type="number" inputMode="numeric" min="1" max="3650" step="1" value={inactiveDays} onChange={(e) => setInactiveDays(e.target.value)} />
         </Field>
         <div><Button type="submit" variant="primary" loading={saving} loadingText={t('common.saving')}>{t('common.save')}</Button></div>
       </form>

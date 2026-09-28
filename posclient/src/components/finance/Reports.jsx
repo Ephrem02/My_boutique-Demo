@@ -12,7 +12,7 @@ import { ACCOUNT_METHODS, SUPPLIER_RETURN_REASONS, CUSTOMER_RETURN_REASONS } fro
 const REASONS = [...new Set([...SUPPLIER_RETURN_REASONS, ...CUSTOMER_RETURN_REASONS])];
 
 /** Downloads a report as CSV (same filters as on screen). */
-async function downloadCsv(path, params, name) {
+export async function downloadCsv(path, params, name) {
   const { data } = await client.get(path, { params: { ...params, format: 'csv' }, responseType: 'blob' });
   const url = URL.createObjectURL(data);
   const a = document.createElement('a');

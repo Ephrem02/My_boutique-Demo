@@ -26,14 +26,14 @@ test('cashier pays off an overdue customer invoice in instalment history', async
   await page.goto('/institutions');
   await settle(page);
   await page.getByRole('button', { name: /Green Hills School/ }).first().click();
-  const account = page.getByRole('dialog', { name: 'Green Hills School' });
-  await expect(account.getByText('Owes us')).toBeVisible();
-  await account.getByRole('tab', { name: 'Statement' }).click();
-  await expect(account.getByRole('table', { name: 'Statement' })).toBeVisible();
-  await account.getByRole('tab', { name: /Invoices/ }).click();
+  await expect(page).toHaveURL(/\/institutions\/\d+$/);
+  await expect(page.getByRole('heading', { name: 'Green Hills School' })).toBeVisible();
+  await expect(page.getByText('Outstanding balance')).toBeVisible();
+  await page.getByRole('tab', { name: 'Payments & credit' }).click();
+  await expect(page.getByRole('table', { name: 'Statement' })).toBeVisible();
+  await page.getByRole('tab', { name: /Sales & invoices/ }).click();
 
-  const overdueCard = account.locator('.record-card').filter({ hasText: 'Overdue' });
-  await overdueCard.getByRole('button', { name: 'Open' }).click();
+  await page.getByRole('table', { name: 'Sales & invoices' }).getByRole('row').filter({ hasText: 'Overdue' }).first().click();
   const invoice = page.getByRole('dialog', { name: /^Invoice #/ });
   await expect(invoice.getByText('MTN-5521')).toBeVisible(); // the first instalment, with its reference
   await noSeriousA11yIssues(page, 'customer invoice');
@@ -53,8 +53,8 @@ test('store keeper sees batch, expiry and the supplier return, and cannot pay su
   await page.goto('/suppliers');
   await settle(page);
   await page.getByRole('button', { name: /Kigali Wholesale/ }).first().click();
-  const account = page.getByRole('dialog', { name: 'Kigali Wholesale Ltd' });
-  await account.getByRole('button', { name: 'Open' }).first().click();
+  await page.getByRole('tab', { name: /Purchases & deliveries/ }).click();
+  await page.getByRole('table', { name: 'Purchases & deliveries' }).getByRole('row').filter({ hasText: 'KW-2026-118' }).click();
   const delivery = page.getByRole('dialog', { name: /^Delivery #/ });
   await expect(delivery.getByText('B-0426')).toBeVisible();
   await expect(delivery.getByText('KW-2026-118')).toBeVisible();
@@ -104,8 +104,8 @@ test('cashier sells on account at the till, part paid; it lands on the customer 
   await page.goto('/institutions');
   await settle(page);
   await page.getByRole('button', { name: /Green Hills School/ }).first().click();
-  const account = page.getByRole('dialog', { name: 'Green Hills School' });
-  await expect(account.locator('.record-card').filter({ hasText: 'RWF 1,600' })).toBeVisible();
+  await page.getByRole('tab', { name: /Sales & invoices/ }).click();
+  await expect(page.getByRole('table', { name: 'Sales & invoices' }).getByRole('row').filter({ hasText: 'RWF 1,600' })).toBeVisible();
 });
 
 test('manager answers "what did we pay each supplier, and how" and exports it', async ({ page }) => {
@@ -127,3 +127,45 @@ test('manager answers "what did we pay each supplier, and how" and exports it', 
   await noSeriousA11yIssues(page, 'returns report');
 });
 
+test('manager works a client 360° profile: edit details, add a note, statement, insights and audit trail', async ({ page }) => {
+  await loginAs(page, 'manager', { theme: 'light' });
+  await page.goto('/institutions');
+  await settle(page);
+  await page.getByRole('button', { name: /Green Hills School/ }).first().click();
+  await expect(page.getByRole('heading', { name: 'Green Hills School' })).toBeVisible();
+  await expect(page.getByText('Identity & contact')).toBeVisible();
+  await expect(page.getByText('How this client pays')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit details' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit Green Hills School' });
+  await edit.getByLabel('District').fill('Gasabo');
+  await edit.getByLabel('Sector').fill('Kimironko');
+  await noSeriousA11yIssues(page, 'edit client');
+  await edit.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Green Hills School updated' })).toBeVisible();
+  await expect(page.getByText(/Kimironko, Gasabo/)).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Notes' }).click();
+  await page.getByLabel('Note').fill('Bursar promised the balance after the term fees come in');
+  await page.getByRole('button', { name: 'Save note' }).click();
+  await expect(page.getByText('Bursar promised the balance')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Payments & credit' }).click();
+  await page.getByRole('button', { name: 'Print statement' }).click();
+  const statement = page.getByRole('dialog', { name: 'Account statement' });
+  await expect(statement.getByText('Opening balance')).toBeVisible();
+  await noSeriousA11yIssues(page, 'printable statement');
+  await statement.getByRole('contentinfo').getByRole('button', { name: 'Close' }).click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export CSV' }).click()]);
+  expect(download.suggestedFilename()).toMatch(/^statement-green-hills-school-\d{4}-\d{2}-\d{2}\.csv$/);
+
+  await page.getByRole('tab', { name: 'Insights' }).click();
+  const top = page.getByRole('table', { name: 'Most bought products' });
+  await expect(top.getByRole('row').nth(1)).toBeVisible(); // at least one product the client bought
+  await noSeriousA11yIssues(page, 'client insights');
+
+  await page.getByRole('tab', { name: 'Activity & audit' }).click();
+  const trail = page.getByRole('table', { name: 'Activity & audit' });
+  await expect(trail.getByText('Details changed').first()).toBeVisible();
+  await expect(trail.getByText('Note added').first()).toBeVisible();
+});

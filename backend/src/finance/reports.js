@@ -157,5 +157,10 @@ const RETURN_COLUMNS = [
   ['quantity', 'Quantity'], ['unit_value', 'Unit value (RWF)'], ['value', 'Value (RWF)'], ['cost', 'Cost (RWF)'], ['reason', 'Reason'],
   ['status', 'Status'], ['written_off', 'Written off'], ['recorded_by', 'Recorded by'], ['notes', 'Notes'],
 ];
+// One account's statement, oldest first, with the running balance
+const STATEMENT_COLUMNS = [
+  ['date', 'Date'], ['party', 'Supplier / customer'], ['kind', 'Entry'], ['invoice_id', 'Invoice'], ['method', 'Method'], ['reference_no', 'Reference'],
+  ['reason', 'Return reason'], ['effect', 'Change (RWF)'], ['balance', 'Balance (RWF)'], ['reversed', 'Reversed'], ['recorded_by_name', 'Recorded by'], ['note', 'Note'],
+];
 
-module.exports = { payments, returnLines, toCsv, PAYMENT_COLUMNS, RETURN_COLUMNS };
+module.exports = { payments, returnLines, toCsv, PAYMENT_COLUMNS, RETURN_COLUMNS, STATEMENT_COLUMNS };

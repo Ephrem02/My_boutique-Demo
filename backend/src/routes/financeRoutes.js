@@ -19,7 +19,8 @@ router.put('/settings', requirePermission('settings.manage'), finance.updateSett
 const onSide = (perm) => (req, res, next) => {
   req.side = SIDES[req.params.side];
   if (!req.side) return res.status(404).json({ error: 'Unknown ledger' });
-  return requirePermission(typeof perm === 'function' ? perm(req.side) : perm)(req, res, next);
+  const codes = typeof perm === 'function' ? perm(req.side) : perm;
+  return requirePermission(...[].concat(codes))(req, res, next);
 };
 const only = (sideName, perm) => (req, res, next) => {
   if (req.params.side !== sideName) return res.status(404).json({ error: 'Not found' });
@@ -29,9 +30,16 @@ const view = (s) => s.perms.view;
 const money = (s) => s.perms.money;
 const pay = (s) => s.perms.pay;
 const recordReturns = (s) => s.perms.returns;
+const partyView = (s) => (s.side === 'supplier' ? 'suppliers.view' : 'institutions.view');
+// Follow-up notes: whoever manages the account or takes its payments
+const noteWriters = (s) => (s.side === 'supplier' ? ['suppliers.manage', s.perms.pay] : ['institutions.manage', s.perms.pay]);
 
 router.get('/:side/parties', onSide(money), finance.parties);
 router.get('/:side/parties/:id/statement', onSide(money), finance.statement);
+router.get('/:side/parties/:id/insights', onSide(money), finance.insights);
+router.get('/:side/parties/:id/activity', onSide('audit.view'), finance.activity);
+router.get('/:side/parties/:id/notes', onSide(partyView), finance.notes);
+router.post('/:side/parties/:id/notes', onSide(noteWriters), finance.addNote);
 router.get('/:side/invoices', onSide(view), finance.invoices);
 router.get('/:side/invoices/:id', onSide(view), finance.invoice);
 router.post('/:side/invoices/:id/payments', onSide(pay), finance.pay);

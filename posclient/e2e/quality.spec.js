@@ -14,6 +14,10 @@ const SCREENS = [
   ['manager', '/'], ['manager', '/products'], ['manager', '/suppliers'], ['manager', '/institutions'], ['manager', '/finance'], ['manager', '/reports'],
   ['manager', '/business-days'], ['manager', '/closing/corrections'], ['manager', '/admin'], ['manager', '/admin/monitoring'],
   ['manager', '/admin/notifications/rules'], ['manager', '/admin/audit'], ['manager', '/admin/users'], ['manager', '/admin/closing'],
+  // client / supplier 360° profiles and their heavier tabs
+  ['cashier', '/institutions/1'], ['keeper', '/suppliers/1'], ['manager', '/institutions/1'], ['manager', '/suppliers/1'],
+  ['manager', '/institutions/1?tab=payments'], ['manager', '/institutions/1?tab=insights'], ['manager', '/institutions/1?tab=activity'],
+  ['manager', '/suppliers/1?tab=products'], ['manager', '/suppliers/1?tab=performance'],
 ];
 
 /** Elements whose right edge is past the viewport, ignoring intentional horizontal scrollers. */

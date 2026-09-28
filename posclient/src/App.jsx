@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import POSPage from './pages/POSPage';
 import Suppliers from './pages/Suppliers';
 import Institutions from './pages/Institutions';
+import PartyProfile from './pages/PartyProfile';
 import Products from './pages/Products';
 import Stock from './pages/Stock';
 import SalesHistory from './pages/SalesHistory';
@@ -56,7 +57,9 @@ export default function App() {
         <Route path="/pos" element={guard(['sales.create'], <POSPage />)} />
         <Route path="/sales-history" element={guard(['sales.view'], <SalesHistory />)} />
         <Route path="/suppliers" element={guard(['suppliers.view'], <Suppliers />)} />
+        <Route path="/suppliers/:id" element={guard(['suppliers.view'], <PartyProfile kind="supplier" key="supplier" />)} />
         <Route path="/institutions" element={guard(['institutions.view'], <Institutions />)} />
+        <Route path="/institutions/:id" element={guard(['institutions.view'], <PartyProfile kind="institution" key="institution" />)} />
         <Route path="/products" element={guard(['products.view'], <Products />)} />
         <Route path="/stock" element={guard(['stock.view'], <Stock />)} />
         <Route path="/reports" element={guard(['reports.sales.view', 'reports.shrinkage.view', 'reports.financial.view'], <Reports />)} />

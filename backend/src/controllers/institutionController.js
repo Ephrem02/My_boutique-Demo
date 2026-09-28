@@ -1,11 +1,14 @@
 const db = require('../config/db');
 const { SIDES } = require('../finance/sides');
 const ledger = require('../finance/ledger');
+const parties = require('../finance/parties');
+const { handleServiceError } = require('../utils/handleServiceError');
 
 async function list(req, res) {
-  const { type } = req.query;
+  const { type, status } = req.query;
   const query = db('institutions').select('*').orderBy('name');
   if (type) query.where({ type });
+  if (status) query.where({ status });
   res.json(await query);
 }
 
@@ -22,29 +25,23 @@ async function getOne(req, res) {
     .select('sales.id', 'sales.created_at', 'sales.total_amount', 'sales.payment_method', 'sales.status', 'users.full_name as cashier_name')
     .orderBy('sales.id', 'desc')
     .limit(100);
-  res.json({ ...institution, orders, till_sales: tillSales.map((s) => ({ ...s, total_amount: Number(s.total_amount) })) });
+  res.json({ ...(await parties.withAssignee(institution)), orders, till_sales: tillSales.map((s) => ({ ...s, total_amount: Number(s.total_amount) })) });
 }
 
 async function create(req, res) {
-  const { name, type, contact_person, contact_phone, address, payment_terms } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-
-  const [institution] = await db('institutions')
-    .insert({ name, type: type || 'other', contact_person, contact_phone, address, payment_terms })
-    .returning('*');
-  res.status(201).json(institution);
+  try {
+    res.status(201).json(await parties.createParty({ req, side: 'customer', body: req.body }));
+  } catch (err) {
+    handleServiceError(err, res);
+  }
 }
 
 async function update(req, res) {
-  const { id } = req.params;
-  const { name, type, contact_person, contact_phone, address, payment_terms } = req.body;
-
-  const [institution] = await db('institutions')
-    .where({ id })
-    .update({ name, type, contact_person, contact_phone, address, payment_terms })
-    .returning('*');
-  if (!institution) return res.status(404).json({ error: 'Institution not found' });
-  res.json(institution);
+  try {
+    res.json(await parties.updateParty({ req, side: 'customer', id: req.params.id, body: req.body }));
+  } catch (err) {
+    handleServiceError(err, res);
+  }
 }
 
 async function remove(req, res) {

@@ -9,8 +9,8 @@ router.use(authenticate);
 
 router.get('/', requirePermission('institutions.view'), institutions.list);
 router.get('/:id', requirePermission('institutions.view'), institutions.getOne);
-router.post('/', requirePermission('institutions.manage'), auditRoute('institution.create', 'institution'), institutions.create);
-router.put('/:id', requirePermission('institutions.manage'), auditRoute('institution.update', 'institution'), institutions.update);
+router.post('/', requirePermission('institutions.manage'), institutions.create);
+router.put('/:id', requirePermission('institutions.manage'), institutions.update);
 router.delete('/:id', requirePermission('institutions.manage'), auditRoute('institution.delete', 'institution'), institutions.remove);
 
 module.exports = router;

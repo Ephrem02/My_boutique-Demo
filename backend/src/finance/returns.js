@@ -15,6 +15,7 @@ const { n, text } = ledger;
 // ---- Finance settings (app_settings key 'finance') --------------------------
 const FINANCE_DEFAULTS = {
   customer_return_approval_rwf: 100000, // customer returns worth more than this wait for a manager
+  inactive_customer_days: 90, // a client with no purchase for longer than this shows as inactive
 };
 
 async function getFinanceSettings(trx = db) {
@@ -31,6 +32,11 @@ async function updateFinanceSettings({ req, input }) {
     const v = Number(input.customer_return_approval_rwf);
     if (!Number.isFinite(v) || v < 0 || v > 1e12) throw new AppError('customer_return_approval_rwf must be a non-negative amount', 422);
     next.customer_return_approval_rwf = Math.round(v);
+  }
+  if (input.inactive_customer_days !== undefined) {
+    const v = Number(input.inactive_customer_days);
+    if (!Number.isInteger(v) || v < 1 || v > 3650) throw new AppError('inactive_customer_days must be a whole number of days (1-3650)', 422);
+    next.inactive_customer_days = v;
   }
   await db.transaction(async (trx) => {
     await trx('app_settings').insert({ key: 'finance', value: JSON.stringify(next) }).onConflict('key').merge();

@@ -46,6 +46,8 @@ async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDat
   return db.transaction(async (trx) => {
     const institution = await trx('institutions').where({ id: institutionId }).first();
     if (!institution) throw new AppError('Customer not found', 404);
+    // Blocked clients can still pay what they owe, but get no new credit
+    if (institution.status === 'blocked') throw new AppError(`${institution.name} is blocked: new sales on account are not allowed`, 409);
 
     const [order] = await trx('institution_orders')
       .insert({

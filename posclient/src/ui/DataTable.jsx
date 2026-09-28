@@ -18,12 +18,14 @@ import { EmptyState, ErrorState, Skeleton } from './display';
  *   searchValue?(row)
  * }]
  * Rows are clickable when onRowClick is given (keyboard: Enter/Space).
+ * rowClassName?(row) adds a class to a row, e.g. 'txn-reversed'.
  */
 export default function DataTable({
   columns,
   rows,
   rowKey = 'id',
   onRowClick,
+  rowClassName,
   rowLabel,
   loading = false,
   error,
@@ -81,9 +83,10 @@ export default function DataTable({
   }
 
   function rowProps(row) {
-    if (!onRowClick) return {};
+    const extra = rowClassName?.(row);
+    if (!onRowClick) return extra ? { className: extra } : {};
     return {
-      className: 'clickable',
+      className: extra ? `clickable ${extra}` : 'clickable',
       tabIndex: 0,
       onClick: () => onRowClick(row),
       onKeyDown: (e) => {

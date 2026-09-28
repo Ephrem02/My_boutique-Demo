@@ -518,5 +518,5 @@ async function balancesByParty({ s }) {
 module.exports = {
   parseAmount, parseMethod, parseDate, text, dayFor, lockInvoice, balanceOf, insertPayment, insertRefund, partyName,
   recordPayment, recordAccountPayment, recordRefund, applyCredit, reverseTransaction, listInvoices, invoiceDetail, statement, balancesByParty,
-  returnedPerLine, normalizeBalance, n,
+  returnedPerLine, normalizeBalance, n, transactionsFor, returnsFor, withRunningBalance, invoiceQuery, presentInvoice,
 };

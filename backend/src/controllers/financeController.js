@@ -3,6 +3,7 @@ const ledger = require('../finance/ledger');
 const returns = require('../finance/returns');
 const { overview } = require('../finance/overview');
 const reports = require('../finance/reports');
+const parties = require('../finance/parties');
 
 /** Sends JSON, or a CSV download when ?format=csv. */
 function sendReport(req, res, result, columns, name) {
@@ -49,12 +50,26 @@ module.exports = {
   // GET /api/finance/:side/parties - balances per supplier/customer
   parties: handle(async (req, res) => res.json(await ledger.balancesByParty({ s: req.side }))),
 
-  // GET /api/finance/:side/parties/:id/statement
+  // GET /api/finance/:side/parties/:id/statement?format=csv
   statement: handle(async (req, res) => {
     const result = await ledger.statement({ s: req.side, partyId: id(req) });
     if (!result) return res.status(404).json({ error: 'Not found' });
-    res.json(result);
+    if (req.query.format !== 'csv') return res.json(result);
+    const rows = [...result.entries].reverse().map((e) => ({ ...e, party: result.party.name, reversed: e.reversed ? 'yes' : '' }));
+    sendReport(req, res, { rows }, reports.STATEMENT_COLUMNS, `statement-${req.side.side}-${result.party.id}`);
   }),
+
+  // GET /api/finance/:side/parties/:id/insights?from=&to=
+  insights: handle(async (req, res) => res.json(await parties.insights({ s: req.side, partyId: id(req), from: req.query.from, to: req.query.to }))),
+
+  // GET /api/finance/:side/parties/:id/activity
+  activity: handle(async (req, res) => res.json(await parties.activity({ s: req.side, partyId: id(req), limit: req.query.limit }))),
+
+  // GET|POST /api/finance/:side/parties/:id/notes { body, follow_up_date }
+  notes: handle(async (req, res) => res.json(await parties.listNotes({ s: req.side, partyId: id(req) }))),
+  addNote: handle(async (req, res) => res.status(201).json(await parties.addNote({
+    req, s: req.side, partyId: id(req), body: req.body?.body, followUpDate: req.body?.follow_up_date,
+  }))),
 
   // GET /api/finance/:side/invoices?party_id=&status=&overdue=1
   invoices: handle(async (req, res) => {

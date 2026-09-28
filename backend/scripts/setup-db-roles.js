@@ -49,7 +49,9 @@ async function setupDbRoles({ environment = process.env.NODE_ENV || 'development
     for (const table of ['audit_logs', 'daily_closings', 'closing_adjustments',
       // financial ledger: transactions and invoice/return lines are never edited
       'supplier_transactions', 'customer_transactions', 'supplier_delivery_items', 'institution_order_items',
-      'supplier_return_items', 'customer_return_items']) {
+      'supplier_return_items', 'customer_return_items',
+      // follow-up notes on client/supplier profiles
+      'party_notes']) {
       if (await owner.schema.hasTable(table)) {
         await owner.raw(`REVOKE ALL ON ${table} FROM ${appUser}`);
         await owner.raw(`GRANT SELECT, INSERT ON ${table} TO ${appUser}`);

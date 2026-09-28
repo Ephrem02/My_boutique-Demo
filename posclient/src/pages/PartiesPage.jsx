@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Building2, Plus, Truck } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { KIND, CLIENT_TYPES, PartyDetail, PartyFormDialog } from '../components/parties';
+import { KIND, CLIENT_TYPES, PARTY_STATUSES, STATUS_TONE, PartyFormDialog } from '../components/parties';
 import { PageHeader, Panel, StatusBadge } from '../ui/display';
 import DataTable from '../ui/DataTable';
 import Button from '../ui/Button';
@@ -20,14 +21,16 @@ export default function PartiesPage({ kind }) {
   const [parties, setParties] = useState(null);
   const [unpaid, setUnpaid] = useState([]);
   const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const navigate = useNavigate();
+  const profilePath = (partyId) => `/${kind === 'supplier' ? 'suppliers' : 'institutions'}/${partyId}`;
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedId, setSelectedId] = useState(null);
 
   const load = useCallback(async () => {
     try {
       const [{ data }, unpaidRes] = await Promise.all([
-        client.get(cfg.endpoint, { params: kind === 'institution' && typeFilter ? { type: typeFilter } : {} }),
+        client.get(cfg.endpoint, { params: { ...(kind === 'institution' && typeFilter && { type: typeFilter }), ...(statusFilter && { status: statusFilter }) } }),
         hasPermission(cfg.unpaidView) ? client.get(cfg.unpaidEndpoint) : Promise.resolve(null),
       ]);
       setParties(data);
@@ -37,7 +40,7 @@ export default function PartiesPage({ kind }) {
       setError(err);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, typeFilter]);
+  }, [kind, typeFilter, statusFilter]);
 
   useEffect(() => {
     load();
@@ -50,7 +53,12 @@ export default function PartiesPage({ kind }) {
       key: 'type', header: t('institutions.type'), sortable: true, mobile: 'meta',
       render: (p) => <StatusBadge tone="neutral" dot={false}>{t(`institutions.types.${p.type}`, { defaultValue: p.type })}</StatusBadge>,
     },
-    { key: 'contact', header: t('common.contact'), mobile: 'subtitle', render: (p) => p.contact_person || p.contact_phone || p.contact_email || '—', searchValue: (p) => `${p.contact_person || ''} ${p.contact_phone || ''} ${p.contact_email || ''}` },
+    kind === 'supplier' && { key: 'category', header: t('profile.category'), sortable: true, mobile: 'meta', render: (p) => p.category || '—' },
+    {
+      key: 'status', header: t('profile.status'), sortable: true, mobile: 'meta',
+      render: (p) => <StatusBadge tone={STATUS_TONE[p.status]}>{t(`profile.statuses.${p.status}`)}</StatusBadge>,
+    },
+    { key: 'contact', header: t('common.contact'), mobile: 'subtitle', render: (p) => p.contact_person || p.contact_phone || p.contact_email || '—', searchValue: (p) => `${p.contact_person || ''} ${p.contact_phone || ''} ${p.alt_phone || ''} ${p.contact_email || ''} ${p.district || ''} ${p.city || ''}` },
     { key: 'payment_terms', header: t('common.paymentTerms'), render: (p) => <span className="text-secondary">{p.payment_terms || '—'}</span> },
     unpaid.length > 0 && {
       key: 'balance', header: t(`${cfg.ns}.balanceHeader`), align: 'right', mobile: 'value', sortable: true,
@@ -76,7 +84,7 @@ export default function PartiesPage({ kind }) {
           <ul className="owed-list">
             {unpaid.slice(0, 6).map((u) => (
               <li key={u[cfg.unpaidKey]}>
-                <button type="button" className="owed-item" onClick={() => setSelectedId(u[cfg.unpaidKey])}>
+                <button type="button" className="owed-item" onClick={() => navigate(profilePath(u[cfg.unpaidKey]))}>
                   <span className="owed-name">{u[cfg.unpaidName]}</span>
                   <span className="owed-amount num">{formatRwf(u.balance_due)}</span>
                 </button>
@@ -96,13 +104,21 @@ export default function PartiesPage({ kind }) {
         searchable
         searchPlaceholder={t(`${cfg.ns}.search`)}
         initialSort={{ key: 'name', dir: 'asc' }}
-        onRowClick={(p) => setSelectedId(p.id)}
+        onRowClick={(p) => navigate(profilePath(p.id))}
         rowLabel={(p) => t('common.openNamed', { name: p.name })}
-        toolbar={kind === 'institution' && (
-          <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label={t('institutions.type')} className="filter-select">
-            <option value="">{t('institutions.allTypes')}</option>
-            {CLIENT_TYPES.map((ct) => <option key={ct} value={ct}>{t(`institutions.types.${ct}`)}</option>)}
-          </Select>
+        toolbar={(
+          <>
+            {kind === 'institution' && (
+              <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label={t('institutions.type')} className="filter-select">
+                <option value="">{t('institutions.allTypes')}</option>
+                {CLIENT_TYPES.map((ct) => <option key={ct} value={ct}>{t(`institutions.types.${ct}`)}</option>)}
+              </Select>
+            )}
+            <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label={t('profile.status')} className="filter-select">
+              <option value="">{t('profile.allStatuses')}</option>
+              {PARTY_STATUSES[kind].map((st) => <option key={st} value={st}>{t(`profile.statuses.${st}`)}</option>)}
+            </Select>
+          </>
         )}
         empty={{
           icon: Icon,
@@ -114,9 +130,8 @@ export default function PartiesPage({ kind }) {
 
       {showCreate && (
         <PartyFormDialog kind={kind} onClose={() => setShowCreate(false)}
-          onCreated={(p) => { setShowCreate(false); toast.success(t(`${cfg.ns}.created`, { name: p.name })); load(); }} />
+          onCreated={(p) => { setShowCreate(false); toast.success(t(`${cfg.ns}.created`, { name: p.name })); navigate(profilePath(p.id)); }} />
       )}
-      {selectedId && <PartyDetail kind={kind} id={selectedId} onClose={() => { setSelectedId(null); load(); }} />}
     </div>
   );
 }

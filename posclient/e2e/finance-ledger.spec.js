@@ -9,7 +9,10 @@ import { loginAs, settle } from './helpers';
 
 async function noSeriousA11yIssues(page, where) {
   // Scan the settled UI, not a dialog halfway through its fade-in (contrast would be misread)
-  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  // (infinite ones - spinners, pulses - never finish, so they are skipped)
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect?.getTiming().iterations !== Infinity)
+    .map((a) => a.finished.catch(() => {}))));
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   const serious = results.violations
     .filter((v) => ['serious', 'critical'].includes(v.impact))
@@ -168,4 +171,57 @@ test('manager works a client 360° profile: edit details, add a note, statement,
   const trail = page.getByRole('table', { name: 'Activity & audit' });
   await expect(trail.getByText('Details changed').first()).toBeVisible();
   await expect(trail.getByText('Note added').first()).toBeVisible();
+});
+
+test('credit limit: the till is refused, the cashier asks, a manager approves, the approval is used once', async ({ page }) => {
+  // Manager sets a tiny limit, so any sale on account goes over it
+  await loginAs(page, 'manager', { theme: 'light' });
+  await page.goto('/institutions/1');
+  await settle(page);
+  const creditPanel = page.locator('section.panel').filter({ has: page.getByRole('heading', { name: 'Credit', exact: true }) });
+  await creditPanel.getByRole('button', { name: 'Change limit' }).click();
+  const limitDialog = page.getByRole('dialog', { name: 'Credit for Green Hills School' });
+  await limitDialog.getByLabel('Credit limit (RWF)').fill('1');
+  await limitDialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Credit settings saved' })).toBeVisible();
+  await expect(creditPanel.locator('.metric').filter({ hasText: 'Credit limit' })).toContainText('RWF 1');
+
+  // Cashier tries to sell on account and is sent to a manager
+  await loginAs(page, 'cashier', { theme: 'light' });
+  await page.goto('/pos');
+  await settle(page);
+  await page.getByRole('button', { name: /^Add Soap bar/ }).click();
+  const cart = page.locator('.cart-panel');
+  await cart.getByLabel('Customer (optional)').selectOption({ label: 'Green Hills School' });
+  await cart.getByText('On account').click();
+  await cart.getByRole('button', { name: 'Sell on account' }).click();
+  await expect(cart.getByText('This sale goes over the credit limit')).toBeVisible();
+  await expect(cart.getByRole('button', { name: 'Sell on account' })).not.toHaveAttribute('aria-busy', 'true'); // the refused attempt has finished
+  await noSeriousA11yIssues(page, 'credit limit prompt');
+  await cart.getByLabel(/Reason for the manager/).fill('Bursar pays on Friday');
+  await cart.getByRole('button', { name: 'Ask a manager' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Request sent to the managers' })).toBeVisible();
+  await expect(cart.getByText(/Waiting for a manager/)).toBeVisible();
+
+  // A manager approves it from the Finance queue -> client profile
+  await loginAs(page, 'manager', { theme: 'light' });
+  await page.goto('/finance');
+  await settle(page);
+  await page.getByRole('table', { name: 'Credit limit requests waiting' }).getByRole('row').nth(1).click();
+  await expect(page).toHaveURL(/\/institutions\/1$/);
+  await page.getByRole('button', { name: 'Approve' }).click();
+  const approve = page.getByRole('dialog', { name: 'Approve going over the limit' });
+  await approve.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Approved - it can be used today' })).toBeVisible();
+
+  // The cashier uses it; the sale goes through
+  await loginAs(page, 'cashier', { theme: 'light' });
+  await page.goto('/pos');
+  await settle(page);
+  await page.getByRole('button', { name: /^Add Soap bar/ }).click();
+  await cart.getByLabel('Customer (optional)').selectOption({ label: 'Green Hills School' });
+  await cart.getByText('On account').click();
+  await cart.getByRole('button', { name: 'Sell on account' }).click();
+  await cart.getByRole('button', { name: 'Use the approval and sell' }).click();
+  await expect(page.getByRole('status').filter({ hasText: /Sold on account to Green Hills School/ })).toBeVisible();
 });

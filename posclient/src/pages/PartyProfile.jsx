@@ -155,7 +155,7 @@ export default function PartyProfile({ kind }) {
         <PeriodPicker value={period} onChange={setPeriod} firstActivity={insights.period.first_activity} />
       )}
 
-      {tab === 'overview' && <ProfileOverview kind={kind} party={party} statement={statement} insights={insights} onOpen={openInvoice} />}
+      {tab === 'overview' && <ProfileOverview kind={kind} party={party} statement={statement} insights={insights} onOpen={openInvoice} onChanged={reload} />}
       {tab === 'invoices' && <InvoicesTab kind={kind} invoices={party.deliveries || party.orders} tillSales={party.till_sales} onOpen={openInvoice} />}
       {tab === 'payments' && statement && <PaymentsTab kind={kind} party={party} statement={statement} behaviour={insights?.behaviour} onOpen={openInvoice} />}
       {tab === 'returns' && statement && <ReturnsTab kind={kind} statement={statement} onOpen={openInvoice} />}

@@ -74,6 +74,52 @@ Institutions, and Analytics get added the same way in the next steps.
   though only Stock has routes/controllers so far, so nothing has to be
   re-modeled later.
 
+## Finance API: ledger, profiles, credit (current contract)
+
+> The "payments recompute status" notes above describe phase 1. Money now
+> lives in an append-only ledger (`supplier_transactions` /
+> `customer_transactions`); balances come only from the
+> `*_invoice_balances` views. Corrections are reversals, never edits.
+
+**Idempotency (all money POSTs).** Send `Idempotency-Key: <8-100 chars>` on
+`/api/finance/*`, `/api/sales`, `/api/returns`, `/api/institution-orders`,
+`/api/supplier-deliveries` and `/api/credit-exceptions`. The same key and
+body again returns the first 2xx response with `Idempotent-Replay: true`
+instead of recording twice. The same key with a different body gets 422, and a
+key still in flight gets 409. Failed attempts free the key. Keys are per user
+and kept for 48h.
+
+**Dates.** "Today", "overdue" and default payment dates use the shop
+timezone (Admin › Closing, SQL `shop_today()`), not the server's.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `POST /api/finance/:side/parties/:id/payments` | `*_payments.manage` | One payment split over owed invoices, oldest first; refuses more than owed |
+| `GET /api/finance/:side/parties/:id/statement?format=csv` | `*_payments.view` | Running-balance statement; CSV export |
+| `GET /api/finance/:side/parties/:id/insights?from=&to=` | `*_payments.view` | 360° insights derived from the ledger |
+| `GET /api/finance/:side/parties/:id/activity` | `audit.view` | Audit trail for the party and its invoices |
+| `GET/POST /api/finance/:side/parties/:id/notes` | view / manage or take payments | Append-only follow-up notes |
+| `PUT /api/institutions/:id`, `PUT /api/suppliers/:id` | `*.manage` | Identity + status; audited with before/after |
+| `GET /api/finance/customer/parties/:id/credit` | `institution_payments.view` | Limit, exposure, available, today's approvals |
+| `PUT /api/institutions/:id/credit` `{credit_enabled, credit_limit}` | `credit.manage` | `credit_limit: null` = no limit |
+| `POST /api/credit-exceptions` `{institution_id, amount, reason}` | `institution_orders.manage` | Ask a manager to go over the limit |
+| `POST /api/credit-exceptions/:id/decision` `{decision, note}` | `credit.manage` | Never on one's own request (DB CHECK) |
+| `GET /api/credit-exceptions?status=&institution_id=` | `credit.manage` or `institution_orders.manage` | |
+
+**Credit limits.** Exposure is the client's net ledger balance: approved
+returns and credit balances lower it; pending returns do not. A sale on
+account (back office or till) checks `exposure + unpaid part of the sale`
+against the limit, with the client row locked. Over the limit it returns
+**409** with
+`{ code: 'CREDIT_LIMIT_EXCEEDED' | 'CREDIT_NOT_ALLOWED', limit, exposure, requested, available, excess }`.
+Retry with one of:
+- `credit_exception_id`: an approved request. It is single-use, valid on its
+  shop day only, and must cover `excess`.
+- `credit_override: { reason }`: a manager with `credit.manage`, approving
+  inline. This alerts other managers.
+
+Blocked clients get no new sales on account. They can still pay what they owe.
+
 ## Setup
 
 1. Install PostgreSQL locally (or use a hosted instance) and create a database:

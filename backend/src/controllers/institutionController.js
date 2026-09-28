@@ -55,4 +55,12 @@ async function remove(req, res) {
   res.status(204).send();
 }
 
-module.exports = { list, getOne, create, update, remove };
+async function updateCredit(req, res) {
+  try {
+    res.json(await require('../finance/credit').setCredit({ req, institutionId: req.params.id, body: req.body }));
+  } catch (err) {
+    handleServiceError(err, res);
+  }
+}
+
+module.exports = { list, getOne, create, update, updateCredit, remove };

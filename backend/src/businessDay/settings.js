@@ -22,9 +22,15 @@ function isValidTimezone(tz) {
   }
 }
 
+// Last timezone read from the settings, for code that needs "today" without a
+// query (e.g. defaulting a payment date). Refreshed on every settings read.
+let knownTimezone = CLOSING_DEFAULTS.timezone;
+
 async function getClosingSettings(trx = db) {
   const row = await trx('app_settings').where({ key: 'closing' }).first();
-  return { ...CLOSING_DEFAULTS, ...(row?.value || {}) };
+  const settings = { ...CLOSING_DEFAULTS, ...(row?.value || {}) };
+  knownTimezone = settings.timezone;
+  return settings;
 }
 
 function validateClosingSettings(current, input) {
@@ -79,11 +85,16 @@ function shopDate(settings, date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: settings.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
+/** Today's date in the shop's timezone, without a settings query (see knownTimezone). */
+function shopToday(date = new Date()) {
+  return shopDate({ timezone: knownTimezone }, date);
+}
+
 /** HH:MM in the shop's timezone. */
 function shopTime(settings, date = new Date()) {
   return new Intl.DateTimeFormat('en-GB', { timeZone: settings.timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
 }
 
 module.exports = {
-  CLOSING_DEFAULTS, getClosingSettings, validateClosingSettings, saveClosingSettings, varianceBand, shopDate, shopTime,
+  CLOSING_DEFAULTS, getClosingSettings, validateClosingSettings, saveClosingSettings, varianceBand, shopDate, shopToday, shopTime,
 };

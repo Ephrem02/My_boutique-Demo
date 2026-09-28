@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Banknote, BookUser, CreditCard, Minus, Plus, ShoppingCart, Smartphone, Trash2 } from 'lucide-react';
 import client from '../api/client';
+import { useIdempotencyKey } from '../api/idempotency';
+import CreditLimitPrompt, { isCreditError } from './CreditLimitPrompt';
 import { useAuth } from '../context/AuthContext';
 import { Field, Input, Select } from '../ui/Field';
 import { ACCOUNT_METHODS } from './finance/constants';
@@ -25,7 +27,7 @@ const PAYMENT_METHODS = [
  * history. "On account" (needs a customer): the sale becomes an invoice on
  * their ledger, with part or no payment now.
  */
-function CustomerFields({ customers, customerId, setCustomerId, paymentMethod, account, setAccount, total }) {
+function CustomerFields({ customers, customerId, setCustomerId, paymentMethod, account, setAccount, total, credit }) {
   const { t } = useTranslation();
   if (!customers) return null;
   return (
@@ -38,7 +40,10 @@ function CustomerFields({ customers, customerId, setCustomerId, paymentMethod, a
       </Field>
       {paymentMethod === 'account' && (
         <div className="form-row">
-          <Field label={t('pos.paidNowOptional')} hint={t('pos.owedAfter', { amount: formatRwf(Math.max(0, total - (Number(account.amount) || 0))) })}>
+          <Field label={t('pos.paidNowOptional')} hint={[
+            t('pos.owedAfter', { amount: formatRwf(Math.max(0, total - (Number(account.amount) || 0))) }),
+            credit && (!credit.credit_enabled ? t('credit.noCreditAllowed') : credit.available === null ? t('credit.noLimit') : t('credit.availableHint', { amount: formatRwf(credit.available) })),
+          ].filter(Boolean).join(' · ')}>
             <Input type="number" inputMode="numeric" min="0" step="1" max={total} value={account.amount}
               onChange={(e) => setAccount((a) => ({ ...a, amount: e.target.value }))} />
           </Field>
@@ -55,7 +60,7 @@ function CustomerFields({ customers, customerId, setCustomerId, paymentMethod, a
 
 function CartContents({
   items, total, onUpdateQuantity, onRemove, paymentMethod, setPaymentMethod, error, loading, blocked, onCheckout,
-  customers, customerId, setCustomerId, account, setAccount, canSellOnAccount,
+  customers, customerId, setCustomerId, account, setAccount, canSellOnAccount, credit,
 }) {
   const { t } = useTranslation();
   const methods = [...PAYMENT_METHODS, ...(canSellOnAccount && customerId ? [{ id: 'account', icon: BookUser }] : [])];
@@ -88,9 +93,11 @@ function CartContents({
       </div>
 
       <div className="cart-footer">
-        {error && <ErrorState error={error} action={t('errors.actions.sale')} />}
+        {error && (isCreditError(error)
+          ? <CreditLimitPrompt error={error} institutionId={customerId} onRetry={onCheckout} busy={loading} />
+          : <ErrorState error={error} action={t('errors.actions.sale')} />)}
         <CustomerFields customers={customers} customerId={customerId} setCustomerId={setCustomerId}
-          paymentMethod={paymentMethod} account={account} setAccount={setAccount} total={total} />
+          paymentMethod={paymentMethod} account={account} setAccount={setAccount} total={total} credit={credit} />
         <fieldset className="payment-methods">
           <legend className="payment-legend">{t('pos.paymentMethod')}</legend>
           {methods.map(({ id, icon: Icon }) => (
@@ -106,7 +113,7 @@ function CartContents({
           <span className="cart-total-value num">{formatRwf(total)}</span>
         </div>
         <Button variant="primary" size="lg" block disabled={items.length === 0 || blocked} loading={loading}
-          loadingText={t('pos.completingSale')} onClick={onCheckout}>
+          loadingText={t('pos.completingSale')} onClick={() => onCheckout()}>
           {paymentMethod === 'account' ? t('pos.sellOnAccount') : t('pos.completeSale')}
         </Button>
       </div>
@@ -130,6 +137,15 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
   const [account, setAccount] = useState({ amount: '', method: 'cash' });
   const [loading, setLoading] = useState(false);
   const canSellOnAccount = hasPermission('institution_orders.manage');
+  const [credit, setCredit] = useState(null);
+
+  // Available credit for the chosen client, shown before selling on account
+  useEffect(() => {
+    setCredit(null);
+    if (!customerId || paymentMethod !== 'account' || !hasPermission('institution_payments.view')) return;
+    client.get(`/finance/customer/parties/${customerId}/credit`).then(({ data }) => setCredit(data)).catch(() => setCredit(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, paymentMethod]);
 
   useEffect(() => {
     if (!hasPermission('institutions.view')) return;
@@ -143,11 +159,13 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
   }, [customerId, paymentMethod]);
   const [error, setError] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const idem = useIdempotencyKey();
 
   const total = useMemo(() => items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0), [items]);
   const count = items.reduce((sum, i) => sum + i.quantity, 0);
 
-  async function handleCheckout() {
+  // extra: a credit approval when retrying a sale that went over the limit
+  async function handleCheckout(extra = {}) {
     if (loading) return;
     setError(null);
     setLoading(true);
@@ -159,7 +177,9 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
         customer_id: customerId ? Number(customerId) : undefined,
         items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
         ...(paidNow > 0 && { payment: { amount: paidNow, method: account.method } }),
-      });
+        ...(onAccount && extra),
+      }, idem.config());
+      idem.reset();
       const name = customers?.find((c) => String(c.id) === String(customerId))?.name;
       toast.success(onAccount
         ? t('pos.soldOnAccount', { name, owed: formatRwf(data.balance) })
@@ -180,7 +200,7 @@ export default function Cart({ items, onUpdateQuantity, onRemove, onSold, blocke
     <CartContents items={items} total={total} onUpdateQuantity={onUpdateQuantity} onRemove={onRemove}
       paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} error={error} loading={loading}
       blocked={blocked} onCheckout={handleCheckout} customers={customers} customerId={customerId} setCustomerId={setCustomerId}
-      account={account} setAccount={setAccount} canSellOnAccount={canSellOnAccount} />
+      account={account} setAccount={setAccount} canSellOnAccount={canSellOnAccount} credit={credit} />
   );
 
   if (isMobile) {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import client from '../api/client';
+import { useIdempotencyKey } from '../api/idempotency';
 import Dialog from '../ui/Dialog';
 import Button from '../ui/Button';
 import { Checkbox, Field, Input, Select } from '../ui/Field';
@@ -13,6 +14,7 @@ import { ErrorState } from '../ui/display';
 import { formatRwf } from '../ui/format';
 
 export default function ReturnModal({ saleItem, saleMethod, onClose, onRecorded }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const [refundMethod, setRefundMethod] = useState(REFUND_METHODS.includes(saleMethod) ? saleMethod : 'cash');
@@ -35,7 +37,7 @@ export default function ReturnModal({ saleItem, saleMethod, onClose, onRecorded 
     setError(null);
     setLoading(true);
     try {
-      await client.post('/returns', { sale_item_id: saleItem.id, quantity: qty, reason: reason || undefined, reason_code: reasonCode, refund_method: refundMethod, restocked });
+      await client.post('/returns', { sale_item_id: saleItem.id, quantity: qty, reason: reason || undefined, reason_code: reasonCode, refund_method: refundMethod, restocked }, idem.config());
       onRecorded(qty * Number(saleItem.unit_price));
     } catch (err) {
       setError(err);

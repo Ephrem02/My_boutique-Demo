@@ -13,4 +13,8 @@ export const INVOICE_TONE = { unpaid: 'danger', partial: 'warning', paid: 'succe
 export const RETURN_STATUS_TONE = { pending: 'warning', approved: 'success', rejected: 'neutral' };
 export const SUPPLIER_RESPONSE_TONE = { pending: 'warning', accepted: 'success', disputed: 'danger' };
 
-export const todayIso = () => new Date().toISOString().slice(0, 10);
+// The browser's calendar date (the till is in the shop), not UTC
+export const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};

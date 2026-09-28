@@ -31,10 +31,13 @@ function parseMethod(method) {
   return method;
 }
 
+/** YYYY-MM-DD in the shop's timezone (payments recorded just after midnight get the right day). */
+const shopToday = (date) => require('../businessDay/settings').shopToday(date);
+
 function parseDate(value, field = 'date') {
-  if (value === undefined || value === null || value === '') return new Date().toISOString().slice(0, 10);
+  if (value === undefined || value === null || value === '') return shopToday();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value)) || Number.isNaN(Date.parse(value))) throw new AppError(`${field} must be a date (YYYY-MM-DD)`, 422);
-  if (String(value) > new Date(Date.now() + 86400000).toISOString().slice(0, 10)) throw new AppError(`${field} cannot be in the future`, 422);
+  if (String(value) > shopToday()) throw new AppError(`${field} cannot be in the future`, 422);
   return String(value);
 }
 
@@ -240,7 +243,7 @@ async function applyCredit({ req, s, invoiceId, sourceInvoiceId, amount, note, r
 
     const [txn] = await trx(s.txns).insert({
       [s.party]: target[s.party], [s.invoice]: target.id, [s.source]: source.id, type: 'credit_applied', amount: value, return_id: ret?.id || null,
-      txn_date: new Date().toISOString().slice(0, 10), note: text(note, 1000), recorded_by: req.user.id,
+      txn_date: shopToday(), note: text(note, 1000), recorded_by: req.user.id,
     }).returning('*');
     await audit(req, {
       action: `${auditPrefix(s)}_credit.apply`, entityType: s.entityType, entityId: target.id,
@@ -274,7 +277,7 @@ async function reverseTransaction({ req, s, txnId, reason }) {
     try {
       [reversal] = await trx(s.txns).insert({
         [s.party]: txn[s.party], [s.invoice]: txn[s.invoice], type: 'reversal', amount: txn.amount, reverses_id: txn.id,
-        txn_date: new Date().toISOString().slice(0, 10), note: why, business_day_id: active?.id || null, recorded_by: req.user.id,
+        txn_date: shopToday(), note: why, business_day_id: active?.id || null, recorded_by: req.user.id,
       }).returning('*');
     } catch (err) {
       if (err.code === '23505') throw new AppError('This transaction has already been reversed', 409);

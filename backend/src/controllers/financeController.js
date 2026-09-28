@@ -59,6 +59,9 @@ module.exports = {
     sendReport(req, res, { rows }, reports.STATEMENT_COLUMNS, `statement-${req.side.side}-${result.party.id}`);
   }),
 
+  // GET /api/finance/customer/parties/:id/credit
+  creditStatus: handle(async (req, res) => res.json(await require('../finance/credit').creditStatus({ institutionId: id(req) }))),
+
   // GET /api/finance/:side/parties/:id/insights?from=&to=
   insights: handle(async (req, res) => res.json(await parties.insights({ s: req.side, partyId: id(req), from: req.query.from, to: req.query.to }))),
 

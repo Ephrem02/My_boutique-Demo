@@ -145,7 +145,7 @@ async function checkSupplierPayments() {
     .join('suppliers', 'suppliers.id', 'b.party_id')
     .where('b.balance', '>', 0)
     .whereNotNull('b.due_date')
-    .where('b.due_date', '<=', db.raw(`current_date + (? * interval '1 day')`, [daysBefore]))
+    .where('b.due_date', '<=', db.raw(`shop_today() + (? * interval '1 day')`, [daysBefore]))
     .select(
       'b.invoice_id as id', 'suppliers.name as supplier_name',
       db.raw("to_char(b.due_date, 'YYYY-MM-DD') as due_date"),
@@ -255,6 +255,8 @@ async function runPass({ includeScheduled = false } = {}) {
     const due = !state.lastScheduledAt || Date.now() - state.lastScheduledAt >= SCHEDULE_MS;
     if (includeScheduled || due) {
       checked = (await checkSupplierPayments()) + (await checkCustomerPayments());
+      await require('../middleware/idempotency').purgeOldKeys();
+      await require('../finance/credit').expireOld();
       state.lastScheduledAt = Date.now();
     }
     state.lastRunAt = Date.now();

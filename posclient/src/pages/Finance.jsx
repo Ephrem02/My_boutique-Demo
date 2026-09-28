@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Landmark, Truck, Building2, Wallet, PackageMinus, RotateCcw, AlertTriangle, SlidersHorizontal } from 'lucide-react';
+import { Landmark, Truck, Building2, Wallet, PackageMinus, RotateCcw, AlertTriangle, SlidersHorizontal, Gauge } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, Panel, Metric, DescriptionList, ErrorState, SkeletonPanel, StatusBadge, EmptyState, Tabs } from '../ui/display';
@@ -78,20 +79,25 @@ export default function Finance() {
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(null); // { kind, id }
   const canApprove = hasPermission('customer_returns.approve');
+  const canDecideCredit = hasPermission('credit.manage');
+  const [creditRequests, setCreditRequests] = useState(null);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     try {
-      const [overview, returnsRes] = await Promise.all([
+      const [overview, returnsRes, creditRes] = await Promise.all([
         client.get('/finance/overview', { params: rangeFor(period) }),
         canApprove ? client.get('/finance/customer/returns', { params: { status: 'pending' } }) : Promise.resolve(null),
+        canDecideCredit ? client.get('/credit-exceptions', { params: { status: 'pending' } }) : Promise.resolve(null),
       ]);
       setData(overview.data);
       setPendingReturns(returnsRes?.data || []);
+      setCreditRequests(creditRes?.data || []);
       setError(null);
     } catch (err) {
       setError(err);
     }
-  }, [period, canApprove]);
+  }, [period, canApprove, canDecideCredit]);
 
   useEffect(() => {
     load();
@@ -183,6 +189,21 @@ export default function Finance() {
                   { key: 'reason', header: t('finance.returnReason'), mobile: 'meta', render: (r) => t(`finance.reasons.${r.reason}`) },
                   { key: 'requested_by_name', header: t('finance.recordedBy') },
                   { key: 'total_value', header: t('finance.returnValue'), align: 'right', mobile: 'value', render: (r) => formatRwf(r.total_value) },
+                ]} />
+            </Panel>
+          )}
+
+          {canDecideCredit && creditRequests?.length > 0 && (
+            <Panel title={t('credit.queueTitle')} subtitle={t('credit.queueHint')} icon={Gauge} className="opening-request">
+              <DataTable caption={t('credit.queueTitle')} rows={creditRequests}
+                onRowClick={(r) => navigate(`/institutions/${r.institution_id}`)}
+                rowLabel={(r) => t('common.openNamed', { name: r.customer_name })}
+                columns={[
+                  { key: 'customer_name', header: t('common.name'), mobile: 'title' },
+                  { key: 'reason', header: t('credit.reason'), mobile: 'subtitle' },
+                  { key: 'requested_by_name', header: t('credit.requestedBy'), mobile: 'meta' },
+                  { key: 'business_date', header: t('common.date'), render: (r) => formatDate(r.business_date) },
+                  { key: 'amount', header: t('credit.overBy'), align: 'right', mobile: 'value', render: (r) => formatRwf(r.amount) },
                 ]} />
             </Panel>
           )}

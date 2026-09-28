@@ -58,6 +58,23 @@ async function buildFigures(trx, day, settings) {
     refundCount += Number(r.count);
   }
 
+  // Sold on account this day (customer invoices, at the till or back office).
+  // Kept apart from sales/takings: only the part paid now reaches the till,
+  // and that is already in account_cash_in / the method totals.
+  const invoices = await trx('institution_orders').where({ business_day_id: dayId }).select('id', 'total_amount');
+  const paidNow = invoices.length ? await trx('customer_transactions as t')
+    .whereIn('t.order_id', invoices.map((o) => o.id))
+    .where({ 't.type': 'payment', 't.business_day_id': dayId })
+    .whereNotExists(trx('customer_transactions as r').whereRaw('r.reverses_id = t.id').select(trx.raw('1')))
+    .sum('t.amount as total').first() : { total: 0 };
+  const accountTotal = n(invoices.reduce((s, o) => s + n(o.total_amount), 0));
+  const onAccount = {
+    count: invoices.length,
+    total: accountTotal,
+    paid_now: n(paidNow?.total),
+    on_credit: n(accountTotal - n(paidNow?.total)),
+  };
+
   // Cash moved through the till for supplier/customer accounts this day. A
   // cash transaction reversed on the same day never happened for the till.
   const accountCash = async (table) => {
@@ -178,6 +195,7 @@ async function buildFigures(trx, day, settings) {
       refund_count: refundCount,
       void_count: voidCount,
       void_total: n(voidTotal),
+      on_account: onAccount, // invoices, not takings - see above
     },
     payment_methods: byMethod,
     refunds_by_method: refundsByMethod,

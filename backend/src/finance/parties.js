@@ -112,6 +112,7 @@ const iso = (d) => {
 };
 const daysBetween = (a, b) => Math.round((Date.parse(iso(b)) - Date.parse(iso(a))) / DAY);
 const inPeriod = (date, from, to) => (!from || iso(date) >= from) && (!to || iso(date) <= to);
+const shopToday = () => require('../businessDay/settings').shopToday();
 const avg = (list) => (list.length ? n(list.reduce((s, v) => s + v, 0) / list.length) : null);
 
 function parsePeriod(from, to) {
@@ -144,7 +145,7 @@ async function settlementDates(s, invoices, txns, returns) {
 
 /** Facts about how an account pays: on time vs late, days to pay, instalments, what is overdue now. */
 function paymentBehaviour(invoices, settled) {
-  const today = iso(new Date());
+  const today = shopToday();
   const closed = invoices.filter((i) => settled.get(i.id)?.settled_on);
   const withDue = closed.filter((i) => i.due_date);
   const onTime = withDue.filter((i) => settled.get(i.id).settled_on <= iso(i.due_date));
@@ -272,9 +273,9 @@ async function customerInsights({ s, party, from, to }) {
       purchases: inRange.length,
       value: n(inRange.reduce((acc, p) => acc + p.value, 0)),
       last_purchase_date: lastPurchase,
-      days_since_last_purchase: lastPurchase ? daysBetween(lastPurchase, new Date()) : null,
+      days_since_last_purchase: lastPurchase ? daysBetween(lastPurchase, shopToday()) : null,
       inactive_after_days: settings.inactive_customer_days,
-      inactive: lastPurchase ? daysBetween(lastPurchase, new Date()) > settings.inactive_customer_days : false,
+      inactive: lastPurchase ? daysBetween(lastPurchase, shopToday()) > settings.inactive_customer_days : false,
       avg_days_between_purchases: avg(gaps),
       highest_purchase: inRange.reduce((m, p) => (!m || p.value > m.value ? p : m), null),
       top_products: [...products].sort((a, b) => b.quantity - a.quantity || b.value - a.value).slice(0, 10),
@@ -362,7 +363,7 @@ async function supplierInsights({ s, party, from, to }) {
       deliveries: periodInvoices.length,
       purchase_value: n(periodInvoices.reduce((acc, i) => acc + i.total_amount, 0)),
       last_delivery_date: iso(lastDelivery),
-      days_since_last_delivery: lastDelivery ? daysBetween(lastDelivery, new Date()) : null,
+      days_since_last_delivery: lastDelivery ? daysBetween(lastDelivery, shopToday()) : null,
       units_received: receivedQty,
       units_returned: returnedQty,
       return_rate_units: receivedQty ? n(returnedQty / receivedQty) : null,

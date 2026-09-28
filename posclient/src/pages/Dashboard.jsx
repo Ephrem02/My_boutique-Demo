@@ -120,6 +120,7 @@ function TodaySales({ today, comparison }) {
         { label: t('businessDay.fig.refunds'), value: formatRwf(-f.sales.refunds) },
         { label: t('businessDay.fig.voids'), value: formatNumber(f.sales.void_count) },
         { label: t('businessDay.fig.netSales'), value: formatRwf(f.sales.net), strong: true },
+        ...(f.sales.on_account?.count ? [{ label: t('businessDay.fig.soldOnAccount', { count: f.sales.on_account.count }), value: formatRwf(f.sales.on_account.total) }, { label: t('businessDay.fig.onAccountOwed'), value: formatRwf(f.sales.on_account.on_credit) }] : []),
         { label: t('businessDay.fig.expectedCash'), value: formatRwf(f.cash.expected_cash) },
       ]} />
       {comparison && (

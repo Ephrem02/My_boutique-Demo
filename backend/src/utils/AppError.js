@@ -6,10 +6,12 @@
  * leak in a response.
  */
 class AppError extends Error {
-  constructor(message, status = 400) {
+  /** details: optional safe, machine-readable fields sent with the message (e.g. { code, limit }). */
+  constructor(message, status = 400, details = undefined) {
     super(message);
     this.name = 'AppError';
     this.status = status;
+    this.details = details;
   }
 }
 

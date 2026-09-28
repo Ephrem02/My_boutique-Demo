@@ -119,7 +119,9 @@ export default function ClosingReport({ board, title, actions, headingLevel = 2 
               { label: t('businessDay.fig.refunds'), value: formatRwf(-figures.sales.refunds) },
               { label: t('businessDay.fig.voids'), value: formatNumber(figures.sales.void_count) },
               { label: t('businessDay.fig.netSales'), value: formatRwf(figures.sales.net), strong: true },
+              ...(figures.sales.on_account?.count ? [{ label: t('businessDay.fig.soldOnAccount', { count: figures.sales.on_account.count }), value: formatRwf(figures.sales.on_account.total) }, { label: t('businessDay.fig.onAccountOwed'), value: formatRwf(figures.sales.on_account.on_credit) }] : []),
             ]} />
+            {figures.sales.on_account?.count > 0 && <p className="field-hint">{t('businessDay.fig.onAccountHint')}</p>}
           </div>
           <div>
             <h3 className="subheading">{t('businessDay.fig.cash')}</h3>

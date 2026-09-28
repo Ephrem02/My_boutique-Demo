@@ -54,7 +54,7 @@ async function overdueInvoices(s) {
     .orderBy('b.due_date')
     .limit(20)
     .select('b.invoice_id', 'b.party_id', 'p.name as party_name', 'b.invoice_date', 'b.due_date', 'b.total_amount', 'b.balance',
-      db.raw('(current_date - b.due_date)::int as days_overdue')))
+      db.raw('(shop_today() - b.due_date)::int as days_overdue')))
     .map((r) => ({ ...r, total_amount: n(r.total_amount), balance: n(r.balance) }));
 }
 

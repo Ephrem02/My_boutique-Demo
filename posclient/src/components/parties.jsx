@@ -4,6 +4,7 @@ import {
   FileText, Plus, Trash2, Truck, ClipboardList, CheckCheck, Wallet, Undo2, ArrowLeftRight, RotateCcw, PackageMinus,
 } from 'lucide-react';
 import client from '../api/client';
+import { useIdempotencyKey } from '../api/idempotency';
 import { useAuth } from '../context/AuthContext';
 import Dialog from '../ui/Dialog';
 import Button, { IconButton } from '../ui/Button';
@@ -12,6 +13,7 @@ import { DescriptionList, ErrorState, SkeletonPanel, StatusBadge } from '../ui/d
 import { useToast } from '../ui/Toast';
 import { formatRwf, formatDate } from '../ui/format';
 import ReceiptModal from './ReceiptModal';
+import CreditLimitPrompt, { isCreditError } from './CreditLimitPrompt';
 import { ReasonDialog } from './businessDay/Dialogs';
 import {
   ACCOUNT_METHODS, SUPPLIER_RETURN_REASONS, CUSTOMER_RETURN_REASONS, INVOICE_TONE, RETURN_STATUS_TONE, SUPPLIER_RESPONSE_TONE, todayIso,
@@ -208,6 +210,7 @@ function MoneyFields({ amount, setAmount, method, setMethod, reference, setRefer
 /* ---------------- New purchase invoice (goods received) / sales invoice ---------------- */
 
 export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const cfg = KIND[kind];
@@ -239,7 +242,9 @@ export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
   const subtotal = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0) * (Number(l[priceKey]) || 0), 0);
   const total = Math.max(0, subtotal - (Number(discount) || 0));
 
-  async function submit() {
+  // extra: a credit approval when retrying a sale that went over the limit (not the form event)
+  async function submit(extra) {
+    const approval = extra && !extra.nativeEvent ? extra : {};
     const items = lines
       .filter((l) => l.product_id && l.quantity && l[priceKey] !== '')
       .map((l) => ({
@@ -259,9 +264,9 @@ export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
         ? { supplier_id: partyId, delivery_date: mainDate, payment_due_date: dueDate || null, reference_no: reference || undefined, notes: notes || undefined, items, payment }
         : {
           institution_id: partyId, order_date: mainDate, delivery_date: deliveryDate || null, due_date: dueDate || null,
-          discount_amount: Number(discount) || 0, notes: notes || undefined, items, payment,
+          discount_amount: Number(discount) || 0, notes: notes || undefined, items, payment, ...approval,
         };
-      const { data } = await client.post(cfg.recordsEndpoint, body);
+      const { data } = await client.post(cfg.recordsEndpoint, body, idem.config());
       onRecorded(data);
     } catch (err) {
       setError(err);
@@ -282,7 +287,9 @@ export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
         </>
       )}
     >
-      {error && <ErrorState error={error} />}
+      {error && (isCreditError(error)
+        ? <CreditLimitPrompt error={error} institutionId={partyId} onRetry={submit} busy={loading} />
+        : <ErrorState error={error} />)}
       <div className="form-row">
         <Field label={isDelivery ? t('delivery.deliveryDate') : t('order.orderDate')} required>
           <Input type="date" value={mainDate} onChange={(e) => setMainDate(e.target.value)} required />
@@ -357,6 +364,7 @@ export function LineItemsDialog({ kind, partyId, onClose, onRecorded }) {
 /* ---------------- Payment / refund ---------------- */
 
 function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const isRefund = mode === 'refund';
   const settleable = isRefund ? invoice.returns.filter((r) => kind === 'supplier' || r.status === 'approved') : [];
@@ -377,7 +385,7 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
       await client.post(financeUrl(kind, `/invoices/${invoice.id}/${isRefund ? 'refunds' : 'payments'}`), {
         amount: Number(amount), method, reference_no: reference || undefined, txn_date: txnDate, note: note || undefined,
         return_id: returnId ? Number(returnId) : undefined,
-      });
+      }, idem.config());
       onDone(Number(amount));
     } catch (err) {
       setError(err);
@@ -425,6 +433,7 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
 /* ---------------- Pay the account (spread over owed invoices, oldest first) ---------------- */
 
 export function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, onDone }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const [amount, setAmount] = useState(String(owed));
   const [method, setMethod] = useState(kind === 'supplier' ? 'bank_transfer' : 'cash');
@@ -451,7 +460,7 @@ export function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, o
     try {
       const { data } = await client.post(financeUrl(kind, `/parties/${partyId}/payments`), {
         amount: Number(amount), method, reference_no: reference || undefined, txn_date: txnDate, note: note || undefined,
-      });
+      }, idem.config());
       onDone(data);
     } catch (err) {
       setError(err);
@@ -490,6 +499,7 @@ export function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, o
 /* ---------------- Apply credit from another invoice ---------------- */
 
 function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const [sourceId, setSourceId] = useState(String(sources[0]?.id || ''));
   const source = sources.find((s) => String(s.id) === sourceId);
@@ -519,7 +529,7 @@ function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
     try {
       await client.post(financeUrl(kind, `/invoices/${invoice.id}/credits`), {
         source_invoice_id: Number(sourceId), amount: Number(amount), return_id: returnId ? Number(returnId) : undefined,
-      });
+      }, idem.config());
       onDone(Number(amount));
     } catch (err) {
       setError(err);
@@ -562,6 +572,7 @@ function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
 /* ---------------- Return goods ---------------- */
 
 function ReturnDialog({ kind, invoice, onClose, onDone }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const cfg = KIND[kind];
   const isSupplier = kind === 'supplier';
@@ -596,7 +607,7 @@ function ReturnDialog({ kind, invoice, onClose, onDone }) {
       const { data } = await client.post(financeUrl(kind, `/invoices/${invoice.id}/returns`), {
         items, reason, notes: notes || undefined,
         ...(!isSupplier && Number(refundAmount) > 0 && { refund: { amount: Number(refundAmount), method: refundMethod, reference_no: refundRef || undefined } }),
-      });
+      }, idem.config());
       onDone(data);
     } catch (err) {
       setError(err);
@@ -669,6 +680,7 @@ const TXN_LABEL = (t, kind, txn, invoiceId) => {
 };
 
 export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
+  const idem = useIdempotencyKey();
   const { t } = useTranslation();
   const toast = useToast();
   const { hasPermission, user } = useAuth();
@@ -928,7 +940,7 @@ export function InvoiceDetail({ kind, invoiceId, onClose, onChanged }) {
       {dialog?.type === 'reverse' && (
         <ReasonDialog title={t('finance.reverseTitle')} description={t('finance.reverseHint', { amount: formatRwf(dialog.txn.amount) })}
           label={t('businessDay.review.reason')} minLength={5} danger confirmLabel={t('finance.reverse')} onClose={() => setDialog(null)}
-          onSubmit={async (reason) => { await client.post(financeUrl(kind, `/transactions/${dialog.txn.id}/reverse`), { reason }); changed(t('finance.reversedToast')); }} />
+          onSubmit={async (reason) => { await client.post(financeUrl(kind, `/transactions/${dialog.txn.id}/reverse`), { reason }, idem.config()); idem.reset(); changed(t('finance.reversedToast')); }} />
       )}
       {dialog?.type === 'response' && (
         <ReasonDialog title={t(`finance.supplierResponseTitle.${dialog.response}`)} label={t('businessDay.review.note')} required={false}

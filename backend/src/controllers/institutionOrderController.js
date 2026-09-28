@@ -37,6 +37,7 @@ async function create(req, res) {
     const order = await createOrder({
       req, institutionId: institution_id, orderDate: order_date, deliveryDate: delivery_date, dueDate: due_date,
       discountAmount: discount_amount, notes, items, payment,
+      creditExceptionId: req.body.credit_exception_id, creditOverride: req.body.credit_override,
     });
     res.status(201).json(order);
   } catch (err) {

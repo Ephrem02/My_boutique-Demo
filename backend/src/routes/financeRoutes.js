@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
+const { idempotent } = require('../middleware/idempotency');
 const { requirePermission } = require('../middleware/rbac');
 const { SIDES } = require('../finance/sides');
 const finance = require('../controllers/financeController');
@@ -8,6 +9,7 @@ const finance = require('../controllers/financeController');
 // Every rule is enforced here and in the database; the UI only mirrors it.
 const router = express.Router();
 router.use(authenticate);
+router.use(idempotent()); // POSTs with an Idempotency-Key are never recorded twice
 
 router.get('/overview', requirePermission('reports.financial.view'), finance.overview);
 router.get('/reports/payments', requirePermission('reports.financial.view'), finance.paymentsReport);
@@ -37,6 +39,7 @@ const noteWriters = (s) => (s.side === 'supplier' ? ['suppliers.manage', s.perms
 router.get('/:side/parties', onSide(money), finance.parties);
 router.get('/:side/parties/:id/statement', onSide(money), finance.statement);
 router.get('/:side/parties/:id/insights', onSide(money), finance.insights);
+router.get('/:side/parties/:id/credit', only('customer', money), finance.creditStatus);
 router.get('/:side/parties/:id/activity', onSide('audit.view'), finance.activity);
 router.get('/:side/parties/:id/notes', onSide(partyView), finance.notes);
 router.post('/:side/parties/:id/notes', onSide(noteWriters), finance.addNote);

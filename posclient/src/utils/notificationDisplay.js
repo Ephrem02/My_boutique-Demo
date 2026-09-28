@@ -29,6 +29,9 @@ export function linkFor(notification, hasPermission) {
     // Managers get the day's full report; everyone else the dashboard boards
     return hasPermission('day.history.view') ? `/business-days/${notification.entity_id}` : '/';
   }
+  // Account-level events open that client's / supplier's profile
+  if (notification.entity_type === 'institution') return hasPermission('institutions.view') ? `/institutions/${notification.entity_id}` : null;
+  if (notification.entity_type === 'supplier') return hasPermission('suppliers.view') ? `/suppliers/${notification.entity_id}` : null;
   const link = LINKS[notification.entity_type];
   if (!link || !hasPermission(link.permission)) return null;
   return link.path;

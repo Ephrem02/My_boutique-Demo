@@ -16,7 +16,7 @@ function isClosedPeriodViolation(err) {
  */
 function handleServiceError(err, res) {
   if (err instanceof AppError) {
-    return res.status(err.status).json({ error: err.message });
+    return res.status(err.status).json({ ...(err.details || {}), error: err.message });
   }
   if (isClosedPeriodViolation(err)) {
     return res.status(409).json({ error: CLOSED_PERIOD_MESSAGE });

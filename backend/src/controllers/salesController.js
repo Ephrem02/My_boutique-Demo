@@ -57,7 +57,7 @@ async function getOne(req, res) {
 // customer invoice (at current selling prices, from the front shelf) with an
 // optional part payment - the rest is owed on the customer's ledger.
 async function create(req, res) {
-  const { payment_method, items, customer_id, payment } = req.body;
+  const { payment_method, items, customer_id, payment, credit_exception_id, credit_override } = req.body;
   if (!payment_method || !items || !items.length) {
     return res.status(400).json({ error: 'payment_method and at least one item are required' });
   }
@@ -81,6 +81,7 @@ async function create(req, res) {
       const shopDate = require('../businessDay/settings').shopDate(await require('../businessDay/settings').getClosingSettings());
       const invoice = await createOrder({
         req, institutionId: customer_id, orderDate: shopDate, items: priced, payment, fromLocation: 'front_shelf', notes: 'Sold at the till on account',
+        creditExceptionId: credit_exception_id, creditOverride: credit_override,
       });
       return res.status(201).json({ kind: 'invoice', ...invoice });
     }

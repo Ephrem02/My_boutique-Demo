@@ -20,12 +20,13 @@ const client = axios.create({
  * friendly, action-oriented copy.
  */
 export class ApiError extends Error {
-  constructor(message, { status = 0, kind = 'network', required } = {}) {
+  constructor(message, { status = 0, kind = 'network', required, details } = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.kind = kind;
     this.required = required;
+    this.details = details; // the API's machine-readable fields, e.g. { code: 'CREDIT_LIMIT_EXCEEDED', limit, ... }
   }
 }
 
@@ -40,7 +41,7 @@ client.interceptors.response.use(
       return Promise.reject(new ApiError('Something went wrong on the server.', { status, kind: 'server' }));
     }
     const message = data?.error || err.message || 'Something went wrong';
-    return Promise.reject(new ApiError(message, { status, kind: 'client', required: data?.required }));
+    return Promise.reject(new ApiError(message, { status, kind: 'client', required: data?.required, details: data }));
   }
 );
 

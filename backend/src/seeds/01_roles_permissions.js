@@ -21,7 +21,7 @@ const PERMISSIONS = [
   'institution_payments.view', 'institution_payments.manage',
   'customer_returns.manage', 'customer_returns.approve',
   // Ledger corrections: refunds, credit applications, reversals (managers)
-  'ledger.manage',
+  'ledger.manage', 'credit.manage',
   // Pricing / employees / settings (admin territory)
   'pricing.manage', 'employees.manage', 'settings.manage',
   // Reporting

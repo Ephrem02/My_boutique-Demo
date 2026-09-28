@@ -29,8 +29,13 @@ export default function Button({
 }) {
   const [pending, setPending] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => () => {
-    mounted.current = false;
+  // Set true again on (re)mount: StrictMode mounts, unmounts and remounts in
+  // development, and a stale false would leave the button busy forever.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
   const busy = loading || pending;

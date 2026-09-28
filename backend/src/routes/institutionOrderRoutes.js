@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
+const { idempotent } = require('../middleware/idempotency');
 const { requirePermission } = require('../middleware/rbac');
 const { auditRoute } = require('../audit/auditRoute');
 const orders = require('../controllers/institutionOrderController');
@@ -8,6 +9,7 @@ const orders = require('../controllers/institutionOrderController');
 // live under /api/finance/customer - see financeRoutes.js.
 const router = express.Router();
 router.use(authenticate);
+router.use(idempotent()); // POSTs with an Idempotency-Key are never recorded twice
 
 router.get('/unpaid-summary', requirePermission('institution_payments.view'), orders.unpaidSummary);
 router.get('/', requirePermission('institution_orders.view'), orders.list);

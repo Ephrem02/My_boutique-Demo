@@ -2,11 +2,12 @@ import { useTranslation } from 'react-i18next';
 import { DescriptionList, Panel } from '../../ui/display';
 import { formatRwf, formatDate } from '../../ui/format';
 import { BehaviourPanel } from './ProfileInsights';
+import CreditPanel from './CreditPanel';
 
 const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 1000) / 10}%`);
 
 /** Identity + the figures an owner looks at first + the latest entries. */
-export default function ProfileOverview({ kind, party, statement, insights, onOpen }) {
+export default function ProfileOverview({ kind, party, statement, insights, onOpen, onChanged }) {
   const { t } = useTranslation();
   const isSupplier = kind === 'supplier';
   const f = insights?.financial;
@@ -61,6 +62,8 @@ export default function ProfileOverview({ kind, party, statement, insights, onOp
           </Panel>
         )}
       </div>
+
+      {!isSupplier && statement && <CreditPanel party={party} onChanged={onChanged} />}
 
       {insights && <BehaviourPanel behaviour={insights.behaviour} kind={kind} />}
 

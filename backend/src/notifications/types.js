@@ -244,6 +244,27 @@ const TYPES = {
     title: 'Customer return {{decision}}',
     body: '{{reviewer_name}} {{decision}} the return from {{customer_name}} on invoice #{{order_id}}. {{note}}',
   },
+  CREDIT_EXCEPTION_REQUESTED: {
+    category: 'sales', severity: 'warning', permission: 'credit.manage',
+    roles: ['store_manager'], inApp: true, email: false,
+    vars: ['customer_name', 'amount_rwf', 'reason', 'actor_name'],
+    title: 'Credit limit approval needed: {{customer_name}}',
+    body: '{{actor_name}} asks to go {{amount_rwf}} over the credit limit of {{customer_name}}. Reason: {{reason}}',
+  },
+  CREDIT_EXCEPTION_DECIDED: {
+    category: 'sales', severity: 'info', permission: 'institution_orders.manage', mandatory: true, targetAlways: true,
+    roles: [], inApp: true, email: false,
+    vars: ['customer_name', 'amount_rwf', 'decision', 'reviewer_name', 'note'],
+    title: 'Credit request {{decision}}: {{customer_name}}',
+    body: '{{reviewer_name}} {{decision}} going {{amount_rwf}} over the credit limit of {{customer_name}}. Valid today only. {{note}}',
+  },
+  CREDIT_LIMIT_OVERRIDDEN: {
+    category: 'security', severity: 'warning', permission: 'credit.manage', mandatory: true,
+    roles: ['store_manager'], inApp: true, email: true,
+    vars: ['customer_name', 'order_id', 'over_rwf', 'reason', 'actor_name'],
+    title: 'Credit limit overridden: {{customer_name}}',
+    body: '{{actor_name}} sold on account {{over_rwf}} over the credit limit of {{customer_name}} (invoice #{{order_id}}). Reason: {{reason}}',
+  },
   LEDGER_REVERSAL: {
     category: 'security', severity: 'warning', permission: 'ledger.manage', mandatory: true,
     roles: ['store_manager'], inApp: true, email: true,

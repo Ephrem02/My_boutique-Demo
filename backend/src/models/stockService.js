@@ -141,7 +141,7 @@ async function recordDamage({ productId, locationId, quantity, notes, performedB
         cause: 'spoilage',
         notes,
         recorded_by: performedBy,
-        recorded_date: new Date().toISOString().slice(0, 10),
+        recorded_date: require('../businessDay/settings').shopToday(),
       })
       .returning('*');
 

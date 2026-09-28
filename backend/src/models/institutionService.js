@@ -6,6 +6,7 @@ const { audit } = require('../audit/auditService');
 const { formatRwf } = require('../utils/sanitize');
 const { SIDES } = require('../finance/sides');
 const ledger = require('../finance/ledger');
+const credit = require('../finance/credit');
 
 const s = SIDES.customer;
 
@@ -20,8 +21,15 @@ const s = SIDES.customer;
  * discount_amount: invoice-level discount (total = lines - discount).
  * payment ({ amount, method, reference_no }): paid at the sale; without it
  * the whole invoice is on credit. Balances/status come from the ledger.
+ *
+ * Credit limit: whatever is not paid now goes on the client's account, so it
+ * is checked against their limit (finance/credit.js) with the client row
+ * locked. Going over needs creditExceptionId (a manager's approval for today)
+ * or creditOverride ({ reason }, a manager approving inline).
  */
-async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment, fromLocation = 'store_room' }) {
+async function createOrder({
+  req, institutionId, orderDate, deliveryDate, dueDate, discountAmount, notes, items, payment, fromLocation = 'store_room', creditExceptionId, creditOverride,
+}) {
   if (!items || !items.length) throw new AppError('An order needs at least one item');
   const lines = inLockOrder(items).map((i) => {
     const unitPrice = Number(i.unit_price);
@@ -44,13 +52,23 @@ async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDat
   const recordedBy = req.user.id;
 
   return db.transaction(async (trx) => {
-    const institution = await trx('institutions').where({ id: institutionId }).first();
+    // Locked: concurrent credit sales to the same client are checked one at a time
+    const institution = await trx('institutions').where({ id: Number(institutionId) || 0 }).forUpdate().first();
     if (!institution) throw new AppError('Customer not found', 404);
     // Blocked clients can still pay what they owe, but get no new credit
     if (institution.status === 'blocked') throw new AppError(`${institution.name} is blocked: new sales on account are not allowed`, 409);
 
+    const onCredit = ledger.n(totalAmount - (pay?.amount || 0));
+    const exception = await credit.checkSale(trx, {
+      req, institution, creditAmount: onCredit, exceptionId: creditExceptionId, overrideReason: creditOverride?.reason,
+    });
+
+    // The open business day, if any: the sale then shows in that day's figures
+    const activeDay = await trx('business_days').whereIn('status', require('../businessDay/businessDayService').ACTIVE).first('id');
+
     const [order] = await trx('institution_orders')
       .insert({
+        business_day_id: activeDay?.id || null,
         institution_id: institutionId,
         order_date: soldOn,
         delivery_date: deliveryDate || null,
@@ -108,6 +126,8 @@ async function createOrder({ req, institutionId, orderDate, deliveryDate, dueDat
         req, s, invoice: order, amount: pay.amount, method: pay.method, referenceNo: pay.referenceNo, txnDate: soldOn, note: 'Paid at sale',
       });
     }
+
+    if (exception) await credit.useException(trx, { req, exception, order, institution, creditAmount: onCredit });
 
     return { ...order, discount_amount: ledger.n(order.discount_amount), ...(await ledger.balanceOf(trx, s, order.id)), items: itemRows };
   });

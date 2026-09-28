@@ -128,6 +128,7 @@ export function ClosingWizard({ onClose, onDone }) {
         <DescriptionList items={[
           { label: t('businessDay.fig.totalSales'), value: formatRwf(f.sales.gross), strong: true },
           { label: t('businessDay.fig.transactions'), value: f.sales.transactions },
+          ...(f.sales.on_account?.count ? [{ label: t('businessDay.fig.soldOnAccount', { count: f.sales.on_account.count }), value: formatRwf(f.sales.on_account.total) }, { label: t('businessDay.fig.onAccountOwed'), value: formatRwf(f.sales.on_account.on_credit) }] : []),
           ...METHODS.map((m) => ({ label: t(`paymentMethods.${m}`), value: formatRwf(f.payment_methods[m]) })),
           { label: t('businessDay.fig.refunds'), value: formatRwf(-f.sales.refunds) },
           { label: t('businessDay.fig.voids'), value: f.sales.void_count },

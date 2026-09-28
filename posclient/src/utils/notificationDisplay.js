@@ -31,6 +31,7 @@ export function linkFor(notification, hasPermission) {
   }
   // Account-level events open that client's / supplier's profile
   if (notification.entity_type === 'institution') return hasPermission('institutions.view') ? `/institutions/${notification.entity_id}` : null;
+  if (notification.entity_type === 'stock_count') return hasPermission('stock.count', 'stock.count.approve') ? `/stock-counts/${notification.entity_id}` : null;
   if (notification.entity_type === 'supplier') return hasPermission('suppliers.view') ? `/suppliers/${notification.entity_id}` : null;
   const link = LINKS[notification.entity_type];
   if (!link || !hasPermission(link.permission)) return null;

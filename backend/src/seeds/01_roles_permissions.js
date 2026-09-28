@@ -7,7 +7,7 @@ const PERMISSIONS = [
   'sales.create', 'sales.void', 'sales.view', 'sales.view_all',
   'returns.process',
   // Stock
-  'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view',
+  'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view', 'stock.count', 'stock.count.approve',
   // Products & categories
   'products.manage', 'products.view',
   // Suppliers
@@ -49,7 +49,7 @@ const ROLE_PERMISSIONS = {
   ],
   store_keeper: [
     'sales.create', 'sales.view', 'sales.view_all', 'returns.process',
-    'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view',
+    'stock.intake', 'stock.transfer', 'stock.adjust', 'stock.view', 'stock.movements.view', 'stock.count',
     'products.manage', 'products.view',
     // Receive goods and return them to suppliers; never pay suppliers
     'suppliers.view', 'supplier_deliveries.manage', 'supplier_deliveries.view', 'supplier_payments.view', 'supplier_returns.manage',

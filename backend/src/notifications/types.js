@@ -47,6 +47,21 @@ const TYPES = {
     title: 'Restocked: {{product_name}}',
     body: '{{product_name}} ({{sku}}) is back above its reorder level with {{quantity}} units.',
   },
+  STOCK_DISCREPANCY: {
+    category: 'inventory', severity: 'warning', permission: 'stock.count',
+    roles: ['store_keeper', 'store_manager'], inApp: true, email: true,
+    thresholds: { critical_value_rwf: 50000 }, // shortage + overage at cost at or above this = critical
+    vars: ['count_number', 'lines', 'shortage_rwf', 'overage_rwf', 'actor_name'],
+    title: 'Stock count differences: {{count_number}}',
+    body: '{{actor_name}} submitted stock count {{count_number}} with {{lines}} difference(s): {{shortage_rwf}} short, {{overage_rwf}} over (at cost). A manager must approve or reject it.',
+  },
+  STOCK_COUNT_DECIDED: {
+    category: 'inventory', severity: 'info', permission: 'stock.count', mandatory: true, targetAlways: true,
+    roles: [], inApp: true, email: false,
+    vars: ['count_number', 'decision', 'reviewer_name', 'note'],
+    title: 'Stock count {{count_number}} {{decision}}',
+    body: '{{reviewer_name}} {{decision}} stock count {{count_number}}. {{note}}',
+  },
   LARGE_DAMAGE: {
     category: 'inventory', severity: 'warning', permission: 'reports.shrinkage.view',
     roles: ['store_manager'], inApp: true, email: true,

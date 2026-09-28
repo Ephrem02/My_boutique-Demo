@@ -1444,6 +1444,21 @@ a.attention-item:hover .attention-text {
   }
 }
 
+/* Stock count: compact number inputs in the count table, product picker */
+.count-input {
+  width: 7rem;
+  margin-left: auto;
+  text-align: right;
+}
+
+.count-product-picker {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
 /* Finance overview: panels side by side on wide screens */
 .finance-grid {
   display: grid;

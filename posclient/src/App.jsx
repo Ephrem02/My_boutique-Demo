@@ -30,6 +30,7 @@ import ClosingTab from './pages/admin/ClosingTab';
 import BusinessTab from './pages/admin/BusinessTab';
 import EmployeeProfile from './pages/EmployeeProfile';
 import Proformas from './pages/Proformas';
+import StockCountPage from './pages/StockCountPage';
 import { ADMIN_PERMISSIONS } from './navigation';
 
 function ProtectedRoute({ children }) {
@@ -72,6 +73,7 @@ export default function App() {
         <Route path="/my-activity" element={<EmployeeProfile self key="me" />} />
         <Route path="/employees/:id" element={guard(['employees.manage'], <EmployeeProfile key="other" />)} />
         <Route path="/proformas" element={guard(['institution_orders.view'], <Proformas />)} />
+        <Route path="/stock-counts/:id" element={guard(['stock.count', 'stock.count.approve'], <StockCountPage />)} />
         <Route path="/closing/corrections" element={guard(['day.corrections.request', 'day.review'], <Corrections />)} />
         <Route path="/business-days" element={guard(['day.history.view'], <BusinessDayHistory />)} />
         <Route path="/business-days/:id" element={guard(['day.history.view'], <BusinessDayDetail />)} />

@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeftRight, Boxes, History, PackagePlus, TriangleAlert } from 'lucide-react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import StockMovementDialog from '../components/StockMovementDialog';
+import StockCounts from '../components/stock/StockCounts';
 import { PageHeader, StatusBadge, Tabs } from '../ui/display';
 import DataTable from '../ui/DataTable';
 import Button from '../ui/Button';
@@ -24,7 +26,15 @@ export default function Stock() {
   const [levels, setLevels] = useState(null);
   const [movements, setMovements] = useState(null);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState('levels');
+  const canCount = hasPermission('stock.count', 'stock.count.approve');
+  const [params, setParams] = useSearchParams();
+  const tabs = [
+    { id: 'levels', label: t('stock.currentLevels') },
+    canSeeMovements && { id: 'movements', label: t('stock.recentMovements') },
+    canCount && { id: 'counts', label: t('counts.title') },
+  ].filter(Boolean);
+  const tab = tabs.some((x) => x.id === params.get('tab')) ? params.get('tab') : 'levels';
+  const setTab = (next) => setParams(next === 'levels' ? {} : { tab: next }, { replace: true });
   const [dialog, setDialog] = useState(null);
 
   const load = useCallback(async () => {
@@ -87,10 +97,7 @@ export default function Stock() {
         )}
       />
 
-      {canSeeMovements && (
-        <Tabs label={t('stock.title')} value={tab} onChange={setTab} className="page-tabs"
-          items={[{ id: 'levels', label: t('stock.currentLevels') }, { id: 'movements', label: t('stock.recentMovements') }]} />
-      )}
+      {tabs.length > 1 && <Tabs label={t('stock.title')} value={tab} onChange={setTab} className="page-tabs" items={tabs} />}
 
       {tab === 'levels' && (
         <DataTable caption={t('stock.currentLevels')} columns={levelColumns} rows={levels} rowKey={(l) => `${l.product_id}-${l.location}`}
@@ -101,6 +108,8 @@ export default function Stock() {
         <DataTable caption={t('stock.recentMovements')} columns={movementColumns} rows={movements} loading={!movements} error={error} onRetry={load}
             searchable searchPlaceholder={t('stock.searchMovements')} empty={{ icon: History, title: t('stock.noMovements'), description: t('stock.noMovementsHint') }} />
       )}
+
+      {tab === 'counts' && canCount && <StockCounts />}
 
       {dialog && <StockMovementDialog kind={dialog} onClose={() => setDialog(null)} onRecorded={recorded(dialog)} />}
     </div>

@@ -71,6 +71,9 @@ module.exports = {
   // POST /api/finance/:side/invoices/:id/payments { amount, method, reference_no, txn_date, note }
   pay: handle(async (req, res) => res.status(201).json(await ledger.recordPayment({ req, s: req.side, invoiceId: id(req), ...moneyBody(req.body) }))),
 
+  // POST /api/finance/:side/parties/:id/payments { amount, method, reference_no, txn_date, note } - oldest invoices first
+  payAccount: handle(async (req, res) => res.status(201).json(await ledger.recordAccountPayment({ req, s: req.side, partyId: id(req), ...moneyBody(req.body) }))),
+
   // POST /api/finance/:side/invoices/:id/refunds { amount, method, reference_no, txn_date, note }
   refund: handle(async (req, res) => res.status(201).json(await ledger.recordRefund({ req, s: req.side, invoiceId: id(req), ...moneyBody(req.body) }))),
 

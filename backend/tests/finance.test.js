@@ -218,6 +218,27 @@ describe('customer ledger', () => {
     expect(await eventsOfType('INSTITUTION_PAYMENT_RECEIVED')).toHaveLength(3);
   });
 
+  test('paying the account spreads one payment over owed invoices, oldest first; never more than owed', async () => {
+    const s = await staff();
+    const { customer, laptop, invoice: first } = await customerInvoice(s, { qty: 2, price: 100000, payment: { amount: 50000, method: 'cash' } });
+    const second = ok(await s.c.post('/api/institution-orders').send({
+      institution_id: customer.id, order_date: today(), items: [{ product_id: laptop.id, quantity: 3, unit_price: 100000 }],
+    }));
+    const url = `/api/finance/customer/parties/${customer.id}/payments`;
+    expect((await s.k.post(url).send({ amount: 1000, method: 'cash' })).status).toBe(403); // keepers don't take client payments
+    expect((await s.c.post(url).send({ amount: 450001, method: 'cash' })).status).toBe(422); // owes 150,000 + 300,000
+
+    const res = ok(await s.c.post(url).send({ amount: 250000, method: 'mtn_mobile_money', reference_no: 'MTN-9' }));
+    expect(res.allocations.map((a) => [a.invoice_id, a.amount, a.balance_after])).toEqual([[first.id, 150000, 0], [second.id, 100000, 200000]]);
+    expect(res.owed_after).toBe(200000);
+    expect((await detail(s.c, 'customer', first.id)).status).toBe('paid');
+    expect((await detail(s.c, 'customer', second.id)).transactions[0]).toMatchObject({ type: 'payment', amount: 100000, reference_no: 'MTN-9' });
+    expect(await ownerDb()('audit_logs').where({ action: 'customer_payment.account' })).toHaveLength(1);
+
+    ok(await s.c.post(url).send({ amount: 200000, method: 'airtel_money' }));
+    expect((await s.c.post(url).send({ amount: 1, method: 'airtel_money' })).status).toBe(409);
+  });
+
   test('a credit sale stays owed and becomes overdue', async () => {
     const s = await staff();
     const { invoice } = await customerInvoice(s, {});

@@ -128,6 +128,51 @@ async function recordPayment({ req, s, invoiceId, amount, method, referenceNo, t
 }
 
 /**
+ * POST /api/finance/:side/parties/:id/payments { amount, method, reference_no, txn_date, note }
+ * One payment for the whole account: spread over the party's owed invoices,
+ * oldest first. Each share is an ordinary payment row on its invoice, so
+ * balances, the till and reversals work exactly as for single payments.
+ * Never more than the account owes - an overpayment belongs on one invoice.
+ */
+async function recordAccountPayment({ req, s, partyId, amount, method, referenceNo, txnDate, note }) {
+  const value = parseAmount(amount);
+  const how = parseMethod(method);
+  const date = parseDate(txnDate, 'txn_date');
+  return db.transaction(async (trx) => {
+    const party = await trx(s.partyTable).where({ id: Number(partyId) || 0 }).first('id');
+    if (!party) throw new AppError(`${s.side === 'supplier' ? 'Supplier' : 'Client'} not found`, 404);
+    // Lock in id order, like applyCredit, so the two can't deadlock
+    const ids = (await trx(s.view).where({ party_id: party.id }).where('balance', '>', 0).select('invoice_id')).map((r) => r.invoice_id).sort((a, b) => a - b);
+    const locked = [];
+    for (const invoiceId of ids) locked.push(await lockInvoice(trx, s, invoiceId));
+    const open = [];
+    for (const invoice of locked) {
+      const balance = await balanceOf(trx, s, invoice.id);
+      if (balance.balance > 0) open.push({ invoice, owed: balance.balance });
+    }
+    open.sort((a, b) => String(a.invoice[s.invoiceDate]).localeCompare(String(b.invoice[s.invoiceDate])) || a.invoice.id - b.invoice.id);
+    const owed = n(open.reduce((sum, o) => sum + o.owed, 0));
+    if (owed <= 0) throw new AppError('Nothing is owed on this account', 409);
+    if (value > owed) throw new AppError(`The account owes ${formatRwf(owed)} - at most that can be paid here`, 422);
+
+    let left = value;
+    const allocations = [];
+    for (const { invoice, owed: due } of open) {
+      if (left <= 0) break;
+      const share = n(Math.min(left, due));
+      const result = await insertPayment(trx, { req, s, invoice, amount: share, method: how, referenceNo, txnDate: date, note });
+      allocations.push({ invoice_id: invoice.id, amount: share, transaction_id: result.transaction.id, balance_after: result.invoice.balance });
+      left = n(left - share);
+    }
+    await audit(req, {
+      action: `${auditPrefix(s)}_payment.account`, entityType: s.side === 'supplier' ? 'supplier' : 'institution', entityId: party.id,
+      newValues: { amount: value, method: how, reference_no: text(referenceNo, 100), txn_date: date, allocations },
+    }, { trx, required: true });
+    return { amount: value, allocations, owed_after: n(owed - value) };
+  });
+}
+
+/**
  * POST /api/finance/:side/invoices/:id/refunds - money back on an invoice in
  * credit: the supplier pays us back, or we pay the customer back. Never more
  * than the credit on that invoice.
@@ -472,6 +517,6 @@ async function balancesByParty({ s }) {
 
 module.exports = {
   parseAmount, parseMethod, parseDate, text, dayFor, lockInvoice, balanceOf, insertPayment, insertRefund, partyName,
-  recordPayment, recordRefund, applyCredit, reverseTransaction, listInvoices, invoiceDetail, statement, balancesByParty,
+  recordPayment, recordAccountPayment, recordRefund, applyCredit, reverseTransaction, listInvoices, invoiceDetail, statement, balancesByParty,
   returnedPerLine, normalizeBalance, n,
 };

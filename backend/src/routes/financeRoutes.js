@@ -35,6 +35,7 @@ router.get('/:side/parties/:id/statement', onSide(money), finance.statement);
 router.get('/:side/invoices', onSide(view), finance.invoices);
 router.get('/:side/invoices/:id', onSide(view), finance.invoice);
 router.post('/:side/invoices/:id/payments', onSide(pay), finance.pay);
+router.post('/:side/parties/:id/payments', onSide(pay), finance.payAccount);
 router.post('/:side/invoices/:id/refunds', onSide('ledger.manage'), finance.refund);
 router.post('/:side/invoices/:id/credits', onSide('ledger.manage'), finance.credit);
 router.post('/:side/invoices/:id/returns', onSide(recordReturns), finance.createReturn);

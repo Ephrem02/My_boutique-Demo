@@ -360,6 +360,71 @@ function MoneyDialog({ kind, invoice, mode, onClose, onDone }) {
   );
 }
 
+/* ---------------- Pay the account (spread over owed invoices, oldest first) ---------------- */
+
+function AccountPaymentDialog({ kind, partyId, invoices, owed, onClose, onDone }) {
+  const { t } = useTranslation();
+  const [amount, setAmount] = useState(String(owed));
+  const [method, setMethod] = useState(kind === 'supplier' ? 'bank_transfer' : 'cash');
+  const [reference, setReference] = useState('');
+  const [txnDate, setTxnDate] = useState(todayIso());
+  const [note, setNote] = useState('');
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Mirrors the server's split so the person paying sees where the money goes
+  const open = invoices.filter((i) => i.balance > 0)
+    .sort((a, b) => String(a.invoice_date).localeCompare(String(b.invoice_date)) || a.id - b.id);
+  let left = Number(amount) || 0;
+  const split = open.map((i) => {
+    const share = Math.max(0, Math.min(left, i.balance));
+    left -= share;
+    return { ...i, share };
+  });
+  const tooMuch = Number(amount) > owed;
+
+  async function submit() {
+    setError(null);
+    setLoading(true);
+    try {
+      const { data } = await client.post(financeUrl(kind, `/parties/${partyId}/payments`), {
+        amount: Number(amount), method, reference_no: reference || undefined, txn_date: txnDate, note: note || undefined,
+      });
+      onDone(data);
+    } catch (err) {
+      setError(err);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog title={t('finance.payAccount')} description={t('finance.payAccountHint', { amount: formatRwf(owed) })} onClose={onClose} onSubmit={submit}
+      footer={(
+        <>
+          <Button onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" variant="primary" loading={loading} loadingText={t('common.recording')} disabled={tooMuch}>{t('payment.recordPayment')}</Button>
+        </>
+      )}
+    >
+      {error && <ErrorState error={error} action={t('errors.actions.payment')} />}
+      <MoneyFields amount={amount} setAmount={setAmount} method={method} setMethod={setMethod} reference={reference} setReference={setReference} autoFocus
+        hint={tooMuch ? t('finance.payAccountTooMuch') : undefined} />
+      <div className="form-row">
+        <Field label={t('payment.datePaid')} required>
+          <Input type="date" value={txnDate} max={todayIso()} onChange={(e) => setTxnDate(e.target.value)} required />
+        </Field>
+        <Field label={t('finance.notes')}><Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} /></Field>
+      </div>
+      <div className="form-section-title">{t('finance.payAccountSplit')}</div>
+      <DescriptionList items={split.map((i) => ({
+        label: t('finance.payAccountInvoice', { id: i.id, date: formatDate(i.invoice_date) }),
+        value: t('finance.payAccountShare', { share: formatRwf(i.share), owed: formatRwf(i.balance) }),
+        tone: i.share >= i.balance ? 'success' : undefined,
+      }))} />
+    </Dialog>
+  );
+}
+
 /* ---------------- Apply credit from another invoice ---------------- */
 
 function CreditDialog({ kind, invoice, sources, onClose, onDone }) {
@@ -861,11 +926,15 @@ export function PartyDetail({ kind, id, onClose }) {
 
   const invoices = party ? (party.deliveries || party.orders || []) : null;
   const summary = statement?.summary;
+  const canPayAccount = summary?.owed > 0 && hasPermission(cfg.payManage);
   const RecordIcon = cfg.recordIcon;
   return (
     <Dialog title={party?.name || t('common.loading')} description={party?.payment_terms || undefined} size="lg" onClose={onClose}
-      footer={hasPermission(cfg.recordManage) ? (
-        <Button variant="primary" icon={Plus} onClick={() => setDialog({ type: 'record' })}>{t(`${cfg.ns}.recordNew`)}</Button>
+      footer={(hasPermission(cfg.recordManage) || canPayAccount) ? (
+        <>
+          {canPayAccount && <Button icon={Wallet} onClick={() => setDialog({ type: 'payAccount' })}>{t('finance.payAccount')}</Button>}
+          {hasPermission(cfg.recordManage) && <Button variant="primary" icon={Plus} onClick={() => setDialog({ type: 'record' })}>{t(`${cfg.ns}.recordNew`)}</Button>}
+        </>
       ) : null}
     >
       {error && <ErrorState error={error} onRetry={load} />}
@@ -996,6 +1065,10 @@ export function PartyDetail({ kind, id, onClose }) {
       {dialog?.type === 'record' && (
         <LineItemsDialog kind={kind} partyId={id} onClose={() => setDialog(null)}
           onRecorded={() => { setDialog(null); toast.success(t(`${cfg.ns}.recorded`)); load(); }} />
+      )}
+      {dialog?.type === 'payAccount' && (
+        <AccountPaymentDialog kind={kind} partyId={id} invoices={statement.invoices} owed={summary.owed} onClose={() => setDialog(null)}
+          onDone={(data) => { setDialog(null); toast.success(t('finance.payAccountRecorded', { amount: formatRwf(data.amount), count: data.allocations.length })); load(); }} />
       )}
       {dialog?.type === 'invoice' && <InvoiceDetail kind={kind} invoiceId={dialog.id} onClose={() => setDialog(null)} onChanged={load} />}
     </Dialog>

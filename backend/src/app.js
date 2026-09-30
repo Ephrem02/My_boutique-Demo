@@ -1,6 +1,5 @@
 const path = require('path');
 const express = require('express');
-app.set('trust proxy', 1);
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -33,6 +32,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const { businessDayRoutes, correctionRoutes } = require('./routes/businessDayRoutes');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Behind a reverse proxy (nginx, a load balancer), set TRUST_PROXY to the
 // number of proxy hops (usually 1) so req.ip is the real client address -
